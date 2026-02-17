@@ -249,6 +249,99 @@ export default defineWebSocketHandler({
         });
         
         console.log(`[Room] 遊戲開始: ${roomId}`);
+        
+        // 生成第一階段問題並發送
+        generateAndSendQuestions(room);
+      }
+      
+      // 回答關係問題
+      if (data.type === "relationship_answer") {
+        const { questionId, answer } = data;
+        const { roomId, playerId } = gamePeer;
+        
+        if (!roomId || !playerId) return;
+        
+        const room = gameState.rooms.get(roomId);
+        if (!room) return;
+        
+        const player = room.players.get(playerId);
+        if (!player || !player.questionQueue) return;
+        
+        // 驗證問題 ID
+        const currentQuestion = player.questionQueue[player.currentQuestionIndex || 0];
+        if (currentQuestion?.questionId !== questionId) {
+          console.error(`[Question] 問題 ID 不匹配`);
+          return;
+        }
+        
+        console.log(`[Question] 玩家 ${gamePeer.playerName} 回答問題 ${player.currentQuestionIndex! + 1}/${player.questionQueue.length}:`, answer);
+        
+        // 記錄答案（TODO: 保存到族譜結構）
+        player.answeredQuestions = (player.answeredQuestions || 0) + 1;
+        player.currentQuestionIndex = (player.currentQuestionIndex || 0) + 1;
+        
+        // 廣播關係已確認（只發給答題者）
+        const peer = Array.from(connections.values()).find(
+          p => (p as GamePeer).playerId === playerId
+        );
+        
+        if (peer) {
+          peer.send(JSON.stringify({
+            type: "relationship_confirmed",
+            questionId,
+            answer,
+          }));
+        }
+        
+        // 發送下一題
+        setTimeout(() => {
+          sendNextQuestion(room, player);
+        }, 500); // 給前端一點時間處理
+      }
+      
+      // 跳過問題
+      if (data.type === "relationship_skip") {
+        const { questionId } = data;
+        const { roomId, playerId } = gamePeer;
+        
+        if (!roomId || !playerId) return;
+        
+        const room = gameState.rooms.get(roomId);
+        if (!room) return;
+        
+        const player = room.players.get(playerId);
+        if (!player || !player.questionQueue) return;
+        
+        // 驗證問題 ID
+        const currentQuestion = player.questionQueue[player.currentQuestionIndex || 0];
+        if (currentQuestion?.questionId !== questionId) {
+          console.error(`[Question] 問題 ID 不匹配`);
+          return;
+        }
+        
+        console.log(`[Question] 玩家 ${gamePeer.playerName} 跳過問題 ${player.currentQuestionIndex! + 1}/${player.questionQueue.length}`);
+        
+        // 記錄跳過
+        player.answeredQuestions = (player.answeredQuestions || 0) + 1;
+        player.currentQuestionIndex = (player.currentQuestionIndex || 0) + 1;
+        
+        // 通知前端已確認跳過
+        const peer = Array.from(connections.values()).find(
+          p => (p as GamePeer).playerId === playerId
+        );
+        
+        if (peer) {
+          peer.send(JSON.stringify({
+            type: "relationship_confirmed",
+            questionId,
+            answer: { relation: "跳過" },
+          }));
+        }
+        
+        // 發送下一題
+        setTimeout(() => {
+          sendNextQuestion(room, player);
+        }, 500); // 給前端一點時間處理
       }
 
       // 重連請求
@@ -432,4 +525,106 @@ function getCurrentRoomState(room: Room) {
     players,
     isLocked: room.isLocked,
   };
+}
+
+// 生成並發送第一階段問題
+function generateAndSendQuestions(room: Room) {
+  const players = Array.from(room.players.values()).filter(p => !p.isOffline && !p.isObserver);
+  
+  // 為每個玩家生成問題隊列
+  for (const player of players) {
+    player.questionQueue = [];
+    player.currentQuestionIndex = 0;
+    player.answeredQuestions = 0;
+    
+    let targetPlayers: Player[];
+    
+    if (players.length < 4) {
+      // 少於4人：詢問所有其他玩家
+      targetPlayers = players.filter(p => p.playerId !== player.playerId);
+    } else {
+      // ≥ 4人：詢問3位其他玩家
+      const otherPlayers = players.filter(p => p.playerId !== player.playerId);
+      targetPlayers = selectRandomPlayers(otherPlayers, 3);
+    }
+    
+    // 建立問題隊列
+    for (const targetPlayer of targetPlayers) {
+      player.questionQueue.push({
+        questionId: crypto.randomUUID(),
+        targetPlayerId: targetPlayer.playerId,
+        targetPlayerName: targetPlayer.name,
+        targetPlayerGender: targetPlayer.gender,
+      });
+    }
+    
+    // 發送第一題
+    sendNextQuestion(room, player);
+  }
+  
+  console.log(`[Question] 已為 ${players.length} 位玩家生成問題隊列`);
+}
+
+// 隨機選擇指定數量的玩家
+function selectRandomPlayers(players: Player[], count: number): Player[] {
+  const shuffled = [...players].sort(() => Math.random() - 0.5);
+  return shuffled.slice(0, Math.min(count, players.length));
+}
+
+// 發送下一題給玩家
+function sendNextQuestion(room: Room, player: Player) {
+  if (!player.questionQueue || player.currentQuestionIndex === undefined) {
+    console.error(`[Question] 玩家 ${player.name} 沒有問題隊列`);
+    return;
+  }
+  
+  // 檢查是否還有問題
+  if (player.currentQuestionIndex >= player.questionQueue.length) {
+    console.log(`[Question] 玩家 ${player.name} 已完成所有問題 (${player.answeredQuestions}/${player.questionQueue.length})`);
+    
+    // 檢查是否所有玩家都完成了
+    checkAllQuestionsCompleted(room);
+    return;
+  }
+  
+  const question = player.questionQueue[player.currentQuestionIndex];
+  const peer = Array.from(connections.values()).find(
+    p => (p as GamePeer).playerId === player.playerId
+  );
+  
+  if (peer) {
+    peer.send(JSON.stringify({
+      type: "relationship_question",
+      questionId: question.questionId,
+      askedPlayerId: player.playerId,
+      targetPlayerId: question.targetPlayerId,
+      targetPlayerName: question.targetPlayerName,
+      targetPlayerGender: question.targetPlayerGender,
+    }));
+    
+    console.log(`[Question] 發送問題 ${player.currentQuestionIndex + 1}/${player.questionQueue.length} 給 ${player.name}: ${question.targetPlayerName} 是你的誰？`);
+  }
+}
+
+// 檢查是否所有玩家都完成問題
+function checkAllQuestionsCompleted(room: Room) {
+  const activePlayers = Array.from(room.players.values()).filter(p => !p.isOffline && !p.isObserver);
+  
+  const allCompleted = activePlayers.every(player => {
+    if (!player.questionQueue) return false;
+    return player.answeredQuestions === player.questionQueue.length;
+  });
+  
+  if (allCompleted) {
+    console.log(`[Question] 所有玩家已完成關係掃描階段`);
+    
+    // 進入下一階段
+    room.status = "in-game";
+    
+    broadcastToRoom(room.roomId, "", {
+      type: "stage_completed",
+      stage: "relationship-scan",
+      nextStage: "in-game",
+    });
+  }
 }

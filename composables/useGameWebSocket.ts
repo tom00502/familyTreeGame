@@ -11,6 +11,14 @@ export interface Player {
   isObserver: boolean
 }
 
+export interface RelationshipQuestion {
+  questionId: string
+  askedPlayerId: string
+  targetPlayerId: string
+  targetPlayerName: string
+  targetPlayerGender: 'male' | 'female' // 目標玩家（被問的人）的性別
+}
+
 export interface RoomState {
   roomId: string
   roomName: string
@@ -19,6 +27,7 @@ export interface RoomState {
   remainingTime: number
   players: Player[]
   isLocked: boolean
+  currentQuestion?: RelationshipQuestion
 }
 
 export function useGameWebSocket() {
@@ -28,6 +37,8 @@ export function useGameWebSocket() {
   const currentPlayer = ref<{ playerId: string; nodeId: string } | null>(null)
   const isOwner = ref(false)
   const error = ref<string | null>(null)
+  const currentQuestion = ref<RelationshipQuestion | null>(null)
+  const gamePhase = ref<'waiting' | 'relationship-scan' | 'in-game' | 'finished'>('waiting')
 
   // 連線到 WebSocket
   const connect = () => {
@@ -135,6 +146,46 @@ export function useGameWebSocket() {
         break
 
       case 'game:started':
+        console.log('遊戲已開始，進入第一階段')
+        gamePhase.value = 'relationship-scan'
+        if (roomState.value) {
+          roomState.value.status = 'relationship-scan'
+        }
+        break
+      
+      case 'relationship_question':
+        // 收到關係問題
+        console.log('收到關係問題:', data)
+        // 只處理發給自己的問題
+        if (data.askedPlayerId === currentPlayer.value?.playerId) {
+          currentQuestion.value = {
+            questionId: data.questionId,
+            askedPlayerId: data.askedPlayerId,
+            targetPlayerId: data.targetPlayerId,
+            targetPlayerName: data.targetPlayerName,
+            targetPlayerGender: data.targetPlayerGender,
+          }
+        }
+        break
+      
+      case 'relationship_confirmed':
+        // 關係已確認 - 只處理自己回答的問題
+        console.log('關係已確認:', data)
+        if (currentQuestion.value?.questionId === data.questionId) {
+          // 清空當前問題，等待下一題
+          currentQuestion.value = null
+        }
+        break
+      
+      case 'stage_completed':
+        // 階段完成
+        console.log('階段完成:', data.stage)
+        if (data.stage === 'relationship-scan') {
+          gamePhase.value = 'in-game'
+          if (roomState.value) {
+            roomState.value.status = 'in-game'
+          }
+        }
         // 遊戲開始
         console.log('遊戲已開始')
         break
@@ -192,6 +243,24 @@ export function useGameWebSocket() {
       gameTime,
     })
   }
+   
+  
+  // 回答關係問題
+  const answerRelationship = (questionId: string, answer: { direction?: string; relation: string }) => {
+    send({
+      type: 'relationship_answer',
+      questionId,
+      answer,
+    })
+  }
+  
+  // 跳過問題
+  const skipQuestion = (questionId: string) => {
+    send({
+      type: 'relationship_skip',
+      questionId,
+    })
+  }
 
   // 通知正在輸入
   const notifyTyping = (roomId: string) => {
@@ -207,13 +276,12 @@ export function useGameWebSocket() {
     gender: 'male' | 'female'
     birthday: string
   }) => {
-    const playerId = localStorage.getItem('playerId') || undefined
-    
     send({
       type: 'member:join',
       roomId,
-      playerId,
-      ...playerInfo,
+      name: playerInfo.name,
+      gender: playerInfo.gender,
+      birthday: playerInfo.birthday,
     })
   }
 
@@ -255,6 +323,8 @@ export function useGameWebSocket() {
     currentPlayer,
     isOwner,
     error,
+    currentQuestion,
+    gamePhase,
 
     // 方法
     connect,
@@ -263,6 +333,8 @@ export function useGameWebSocket() {
     notifyTyping,
     joinRoom,
     startGame,
+    answerRelationship,
+    skipQuestion,
     reconnect,
     clearError,
   }

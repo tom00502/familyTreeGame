@@ -14,6 +14,14 @@ export interface Player {
   isOffline: boolean;
   isObserver: boolean;
   joinedAt: number;
+  questionQueue?: Array<{
+    questionId: string;
+    targetPlayerId: string;
+    targetPlayerName: string;
+    targetPlayerGender: Gender;
+  }>;
+  currentQuestionIndex?: number;
+  answeredQuestions?: number;
 }
 
 export interface FamilyNode {

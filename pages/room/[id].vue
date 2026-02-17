@@ -10,7 +10,7 @@
 
     <!-- 等待大廳階段 -->
     <GameLobby
-      v-else
+      v-else-if="gamePhase === 'waiting'"
       ref="lobbyRef"
       :room-id="roomId"
       :room-state="roomState"
@@ -18,6 +18,30 @@
       :current-player-id="currentPlayer?.playerId"
       @start-game="handleStartGame"
     />
+    
+    <!-- 第一階段：關係掃描 -->
+    <RelationshipQuestion
+      v-else-if="gamePhase === 'relationship-scan' && currentQuestion"
+      :current-question="currentQuestion"
+      :time-limit="120"
+      @answer="handleAnswerQuestion"
+      @skip="handleSkipQuestion"
+      @timeout="handleQuestionTimeout"
+    />
+    
+    <!-- 等待其他玩家回答 -->
+    <div
+      v-else-if="gamePhase === 'relationship-scan' && !currentQuestion"
+      class="min-h-screen bg-[#FAF8F3] flex items-center justify-center p-6"
+    >
+      <div class="text-center space-y-4">
+        <div class="w-16 h-16 mx-auto bg-[#8B2635] rounded-full flex items-center justify-center border-4 border-[#D4AF37] shadow-lg">
+          <div class="text-2xl text-[#FAF8F3]">⏳</div>
+        </div>
+        <h2 class="text-xl font-bold text-[#5C2E2E]">等待其他家人回答問題...</h2>
+        <p class="text-[#8B8278]">請稍候片刻</p>
+      </div>
+    </div>
 
     <!-- 錯誤提示 -->
     <div
@@ -44,6 +68,7 @@
 import { useGameWebSocket } from '~/composables/useGameWebSocket'
 import PlayerInfoForm from '~/components/PlayerInfoForm.vue'
 import GameLobby from '~/components/GameLobby.vue'
+import RelationshipQuestion from '~/components/RelationshipQuestion.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -57,9 +82,13 @@ const {
   currentPlayer,
   isOwner,
   error: wsError,
+  currentQuestion,
+  gamePhase,
   notifyTyping,
   joinRoom,
   startGame,
+  answerRelationship,
+  skipQuestion,
 } = useGameWebSocket()
 
 const hasJoined = ref(false)
@@ -166,11 +195,10 @@ const handleStartGame = () => {
 
     // 監聽遊戲開始
     const checkStarted = setInterval(() => {
-      if (roomState.value?.status === 'relationship-scan' || roomState.value?.status === 'in-game') {
+      if (gamePhase.value === 'relationship-scan') {
         clearInterval(checkStarted)
         isLoading.value = false
-        console.log('遊戲已開始')
-        // TODO: 導向遊戲頁面
+        console.log('遊戲已開始，進入第一階段')
       }
     }, 100)
 
@@ -184,6 +212,30 @@ const handleStartGame = () => {
     error.value = err.message || '開始遊戲失敗'
     isLoading.value = false
   }
+}
+
+// 處理回答問題
+const handleAnswerQuestion = (answer: { direction?: string; relation: string }) => {
+  if (!currentQuestion.value) return
+  
+  console.log('回答問題:', answer)
+  answerRelationship(currentQuestion.value.questionId, answer)
+}
+
+// 處理跳過問題
+const handleSkipQuestion = () => {
+  if (!currentQuestion.value) return
+  
+  console.log('跳過問題')
+  skipQuestion(currentQuestion.value.questionId)
+}
+
+// 處理問題超時
+const handleQuestionTimeout = () => {
+  if (!currentQuestion.value) return
+  
+  console.log('問題超時')
+  skipQuestion(currentQuestion.value.questionId)
 }
 
 // 監聽 WebSocket 錯誤
