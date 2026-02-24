@@ -1,0 +1,150 @@
+{
+  "self": {
+    "gender": "any",
+    "edges": [
+      { "type": "P_f", "target": "father" },
+      { "type": "P_m", "target": "mother" },
+      { "type": "S", "target": "spouse" },
+      { "type": "C_m", "target": "son" },
+      { "type": "C_f", "target": "daughter" }
+    ]
+  },
+  "son": {
+    "gender": "M",
+    "edges": [
+      { "type": "P_f", "target": "self" },
+      { "type": "P_m", "target": "spouse" },
+      { "type": "S", "target": "son_spouse" },
+      { "type": "C_any", "target": "grandson" }
+    ]
+  },
+  "daughter": {
+    "gender": "F",
+    "edges": [
+      { "type": "P_f", "target": "self" },
+      { "type": "P_m", "target": "spouse" },
+      { "type": "S", "target": "son_in_law" },
+      { "type": "C_any", "target": "grandson" }
+    ]
+  },
+  "spouse": {
+    "gender": "any",
+    "edges": [
+      { "type": "S", "target": "self" },
+      { "type": "C_m", "target": "son" },
+      { "type": "C_f", "target": "daughter" }
+    ]
+  },
+  "paternal_grandfather": {
+    "gender": "M",
+    "titles": { "M": "祖父", "F": "祖父" },
+    "edges": [
+      { "type": "P_any", "target": "paternal_great_grandparents_unit" },
+      { "type": "S", "target": "paternal_grandmother" },
+      { "type": "C_any", "target": "father" },
+      { "type": "C_any", "target": "paternal_uncle_aunt" }
+    ]
+  },
+  "paternal_grandmother": {
+    "gender": "F",
+    "titles": { "M": "祖母", "F": "祖母" },
+    "edges": [
+      { "type": "P_any", "target": "paternal_great_grandparents_unit" },
+      { "type": "S", "target": "paternal_grandfather" },
+      { "type": "C_any", "target": "father" },
+      { "type": "C_any", "target": "paternal_uncle_aunt" }
+    ]
+  },
+  "maternal_grandfather": {
+    "gender": "M",
+    "titles": { "M": "外公", "F": "外公" },
+    "edges": [
+      { "type": "P_any", "target": "maternal_great_grandparents_unit" },
+      { "type": "S", "target": "maternal_grandmother" },
+      { "type": "C_any", "target": "mother" },
+      { "type": "C_any", "target": "maternal_uncle_aunt" }
+    ]
+  },
+  "maternal_grandmother": {
+    "gender": "F",
+    "titles": { "M": "外婆", "F": "外婆" },
+    "edges": [
+      { "type": "P_any", "target": "maternal_great_grandparents_unit" },
+      { "type": "S", "target": "maternal_grandfather" },
+      { "type": "C_any", "target": "mother" },
+      { "type": "C_any", "target": "maternal_uncle_aunt" }
+    ]
+  },
+  "father": {
+    "gender": "M",
+    "edges": [
+      { "type": "P_f", "target": "paternal_grandfather" },
+      { "type": "P_m", "target": "paternal_grandmother" },
+      { "type": "S", "target": "mother" },
+      { "type": "C_any", "target": "self" },
+      { "type": "C_any", "target": "sibling" }
+    ]
+  },
+  "mother": {
+    "gender": "F",
+    "edges": [
+      { "type": "P_f", "target": "maternal_grandfather" },
+      { "type": "P_m", "target": "maternal_grandmother" },
+      { "type": "S", "target": "father" },
+      { "type": "C_any", "target": "self" },
+      { "type": "C_any", "target": "sibling" }
+    ]
+  },
+  "sibling": {
+    "gender": "any",
+    "titles": { "M": "兄弟", "F": "姊妹" },
+    "edges": [
+      { "type": "P_f", "target": "father" },
+      { "type": "P_m", "target": "mother" },
+      { "type": "S", "target": "sibling_spouse" },
+      { "type": "C_any", "target": "nephew_niece" }
+    ]
+  },
+  "paternal_uncle_aunt": {
+    "gender": "any",
+    "titles": { "M": "叔伯", "F": "姑姑" },
+    "edges": [
+      { "type": "P_any", "target": "paternal_grandparents_unit" },
+      { "type": "C_any", "target": "paternal_cousin" }
+    ]
+  },
+  "paternal_cousin": {
+    "gender": "any",
+    "titles": { "M": "堂兄弟", "F": "堂姊妹" },
+    "edges": [{ "type": "P_any", "target": "paternal_uncle_aunt" }]
+  },
+  "maternal_uncle_aunt": {
+    "gender": "any",
+    "titles": { "M": "舅舅", "F": "阿姨" },
+    "edges": [
+      { "type": "P_any", "target": "maternal_grandparents_unit" },
+      { "type": "C_any", "target": "maternal_cousin" }
+    ]
+  },
+  "maternal_cousin": {
+    "gender": "any",
+    "titles": { "M": "表兄弟", "F": "表姊妹" },
+    "edges": [{ "type": "P_any", "target": "maternal_uncle_aunt" }]
+  },
+  "paternal_grandparents_unit": {
+    "gender": "any",
+    "edges": [
+      { "type": "P_any", "target": "paternal_great_grandparents_unit" },
+      { "type": "C_any", "target": "father" },
+      { "type": "C_any", "target": "paternal_uncle_aunt" }
+    ]
+  },
+  "maternal_grandparents_unit": {
+    "gender": "any",
+    "edges": [
+      { "type": "P_any", "target": "maternal_great_grandparents_unit" },
+      { "type": "C_any", "target": "mother" },
+      { "type": "C_any", "target": "maternal_uncle_aunt" }
+    ]
+  }
+}
