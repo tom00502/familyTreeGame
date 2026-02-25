@@ -1,16 +1,26 @@
 <template>
-  <div class="member-card">
-    <div class="avatar">{{ data.avatar || '👤' }}</div>
-    <div class="info">
-      <div class="name">{{ data.label }}</div>
-      <div class="meta" v-if="data.relation">{{ data.relation }}</div>
-    </div>
-    <Handle type="target" :position="Position.Top" />
-    <Handle type="source" :position="Position.Bottom" />
+<div class="member-card" :class="[cardClass, { 'card-highlighted': isHighlighted }]">
+  <!-- 高亮動畫（新更新的節點） -->
+  <div v-if="isHighlighted" class="highlight-ring-outer"></div>
+
+  <!-- 上下 Handle（親子關係） -->
+  <Handle id="top" type="target" :position="Position.Top" class="handle-dot" />
+  <Handle id="bottom" type="source" :position="Position.Bottom" class="handle-dot" />
+  <!-- 左右 Handle（配偶關係） -->
+  <Handle id="left" type="target" :position="Position.Left" class="handle-dot handle-side" />
+  <Handle id="right" type="source" :position="Position.Right" class="handle-dot handle-side" />
+
+  <div class="avatar">{{ data.avatar || '👤' }}</div>
+  <div class="info">
+    <div class="name" :class="nameClass">{{ data.label }}</div>
+    <div class="meta" v-if="data.relation">{{ data.relation }}</div>
+    <div v-if="data.isVirtual" class="virtual-badge">待填充</div>
   </div>
+</div>
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { Handle, Position } from '@vue-flow/core'
 import type { NodeProps } from '@vue-flow/core'
 
@@ -18,40 +28,142 @@ interface MemberData {
   label: string
   relation?: string
   avatar?: string
+  isVirtual?: boolean
+  isPlayer?: boolean
+  gender?: 'male' | 'female' | 'unknown'
+  isHighlighted?: boolean
 }
 
-defineProps<NodeProps<MemberData>>()
+const props = defineProps<NodeProps<MemberData>>()
+
+const cardClass = computed(() => {
+  if (props.data.isVirtual) return 'card-virtual'
+  if (props.data.gender === 'male') return 'card-male'
+  if (props.data.gender === 'female') return 'card-female'
+  return 'card-unknown'
+})
+
+const nameClass = computed(() => {
+  return props.data.isVirtual ? 'text-[#8B8278]' : 'text-white'
+})
+
+const isHighlighted = computed(() => props.data.isHighlighted ?? false)
 </script>
 
 <style scoped>
 .member-card {
-  padding: 10px;
-  background: white;
-  border: 2px solid #333;
-  border-radius: 6px;
+  padding: 8px 12px;
+  border-radius: 10px;
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-width: 120px;
+  gap: 8px;
+  min-width: 140px;
+  max-width: 180px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  transition: box-shadow 0.2s;
+  position: relative;
+}
+
+.member-card:hover {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+}
+
+.card-female {
+  background: #8B2635;
+  border: 2px solid #D4AF37;
+}
+
+.card-male {
+  background: #4A7C9E;
+  border: 2px solid #D4AF37;
+}
+
+.card-unknown {
+  background: #6B5B4E;
+  border: 2px solid #D4AF37;
+}
+
+.card-virtual {
+  background: #FAF8F3;
+  border: 2px dashed #8B8278;
+}
+
+.card-highlighted {
+  box-shadow: 0 0 16px rgba(212, 175, 55, 0.6);
+}
+
+.highlight-ring-outer {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 100%;
+  height: 100%;
+  border: 2px solid #D4AF37;
+  border-radius: 10px;
+  transform: translate(-50%, -50%);
+  animation: pingHighlight 1.5s ease-out forwards;
+}
+
+@keyframes pingHighlight {
+  0% {
+    box-shadow: 0 0 0 0 rgba(212, 175, 55, 0.8);
+    opacity: 1;
+  }
+
+  100% {
+    box-shadow: 0 0 0 16px rgba(212, 175, 55, 0);
+    opacity: 0;
+  }
 }
 
 .avatar {
-  font-size: 24px;
+  font-size: 22px;
+  line-height: 1;
 }
 
 .info {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  overflow: hidden;
 }
 
-.name { 
-  font-weight: bold;
-  font-size: 14px;
+.name {
+  font-weight: 700;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.meta { 
-  font-size: 12px;
-  color: #666;
+.meta {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.card-virtual .meta {
+  color: #8B8278;
+}
+
+.virtual-badge {
+  font-size: 10px;
+  color: #D4AF37;
+  font-weight: 600;
+}
+
+/* Handle 樣式 */
+.handle-dot {
+  width: 8px !important;
+  height: 8px !important;
+  background: #D4AF37 !important;
+  border: 2px solid #FAF8F3 !important;
+}
+
+.handle-side {
+  opacity: 0.5;
+}
+
+.member-card:hover .handle-side {
+  opacity: 1;
 }
 </style>

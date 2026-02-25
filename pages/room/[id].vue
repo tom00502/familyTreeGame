@@ -1,79 +1,80 @@
 <template>
-  <div>
-    <!-- 資料輸入階段 -->
-    <PlayerInfoForm
-      v-if="!hasJoined"
-      :room-id="roomId"
-      @submit="handlePlayerInfoSubmit"
-      @typing="handleTyping"
-    />
+<div>
+  <!-- 資料輸入階段 -->
+  <PlayerInfoForm v-if="!hasJoined" :room-id="roomId" @submit="handlePlayerInfoSubmit" @typing="handleTyping" />
 
-    <!-- 等待大廳階段 -->
-    <GameLobby
-      v-else-if="gamePhase === 'waiting'"
-      ref="lobbyRef"
-      :room-id="roomId"
-      :room-state="roomState"
-      :is-owner="isOwner"
-      :current-player-id="currentPlayer?.playerId"
-      @start-game="handleStartGame"
-    />
-    
-    <!-- 第一階段：關係掃描 -->
-    <RelationshipQuestion
-      v-else-if="gamePhase === 'relationship-scan' && currentQuestion"
-      :current-question="currentQuestion"
-      :time-limit="120"
-      @answer="handleAnswerQuestion"
-      @skip="handleSkipQuestion"
-      @timeout="handleQuestionTimeout"
-    />
-    
-    <!-- 等待其他玩家回答 -->
-    <div
-      v-else-if="gamePhase === 'relationship-scan' && !currentQuestion"
-      class="min-h-screen bg-[#FAF8F3] flex items-center justify-center p-6"
-    >
-      <div class="text-center space-y-4">
-        <div class="w-16 h-16 mx-auto bg-[#8B2635] rounded-full flex items-center justify-center border-4 border-[#D4AF37] shadow-lg">
-          <div class="text-2xl text-[#FAF8F3]">⏳</div>
-        </div>
-        <h2 class="text-xl font-bold text-[#5C2E2E]">等待其他家人回答問題...</h2>
-        <p class="text-[#8B8278]">請稍候片刻</p>
+  <!-- 等待大廳階段 -->
+  <GameLobby v-else-if="gamePhase === 'waiting'" ref="lobbyRef" :room-id="roomId" :room-state="roomState"
+    :is-owner="isOwner" :current-player-id="currentPlayer?.playerId" @start-game="handleStartGame" />
+
+  <!-- 第一階段：關係掃描 -->
+  <RelationshipQuestion v-else-if="gamePhase === 'relationship-scan' && currentQuestion"
+    :current-question="currentQuestion" :time-limit="120" @answer="handleAnswerQuestion" @skip="handleSkipQuestion"
+    @timeout="handleQuestionTimeout" />
+
+  <!-- 等待其他玩家回答 -->
+  <div v-else-if="gamePhase === 'relationship-scan' && !currentQuestion"
+    class="min-h-screen bg-[#FAF8F3] flex items-center justify-center p-6">
+    <div class="text-center space-y-4">
+      <div
+        class="w-16 h-16 mx-auto bg-[#8B2635] rounded-full flex items-center justify-center border-4 border-[#D4AF37] shadow-lg">
+        <div class="text-2xl text-[#FAF8F3]">⏳</div>
       </div>
-    </div>
-
-    <!-- 錯誤提示 -->
-    <div
-      v-if="error"
-      class="fixed top-6 left-1/2 transform -translate-x-1/2 bg-red-500 text-white px-6 py-3 rounded-lg shadow-lg z-50"
-    >
-      {{ error }}
-    </div>
-
-    <!-- Loading -->
-    <div
-      v-if="isLoading"
-      class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
-    >
-      <div class="bg-white rounded-lg p-6 flex flex-col items-center gap-4">
-        <div class="w-12 h-12 border-4 border-[#8B2635] border-t-transparent rounded-full animate-spin"></div>
-        <p class="text-[#5C2E2E]">{{ loadingMessage }}</p>
-      </div>
+      <h2 class="text-xl font-bold text-[#5C2E2E]">等待其他家人回答問題...</h2>
+      <p class="text-[#8B8278]">請稍候片刻</p>
     </div>
   </div>
+
+  <!-- 第一階段完成：骨架族譜預覽（MVFT 驗證模式） -->
+  <MvftPreview v-else-if="gamePhase === 'in-game' && mvftData" :mvft="mvftData" />
+
+  <!-- in-game 尚未收到 MVFT 時的等待狀態 -->
+  <div v-else-if="gamePhase === 'in-game' && !mvftData"
+    class="min-h-screen bg-[#FAF8F3] flex items-center justify-center p-6">
+    <div class="text-center space-y-4">
+      <div
+        class="w-16 h-16 mx-auto bg-[#D4AF37] rounded-full flex items-center justify-center border-4 border-[#8B2635] shadow-lg">
+        <div class="text-2xl">🌳</div>
+      </div>
+      <h2 class="text-xl font-bold text-[#5C2E2E]">族譜結構生成中…</h2>
+      <p class="text-[#8B8278]">正在組裝骨架族譜，請稍候筇候</p>
+      <div class="w-8 h-8 border-4 border-[#8B2635] border-t-transparent rounded-full animate-spin mx-auto"></div>
+    </div>
+  </div>
+
+  <!-- 錯誤提示 -->
+  <div v-if="error"
+    class="fixed top-6 left-1/2 transform -translate-x-1/2 bg-red-500 text-white px-6 py-3 rounded-lg shadow-lg z-50">
+    {{ error }}
+  </div>
+
+  <!-- Loading -->
+  <div v-if="isLoading" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+    <div class="bg-white rounded-lg p-6 flex flex-col items-center gap-4">
+      <div class="w-12 h-12 border-4 border-[#8B2635] border-t-transparent rounded-full animate-spin"></div>
+      <p class="text-[#5C2E2E]">{{ loadingMessage }}</p>
+    </div>
+  </div>
+</div>
 </template>
 
 <script setup lang="ts">
+console.log('[Room] ========== room/[id].vue 腳本開始執行 ==========')
+
 import { useGameWebSocket } from '~/composables/useGameWebSocket'
 import PlayerInfoForm from '~/components/PlayerInfoForm.vue'
 import GameLobby from '~/components/GameLobby.vue'
 import RelationshipQuestion from '~/components/RelationshipQuestion.vue'
+import MvftPreview from '~/components/MvftPreview.vue'
 
 const route = useRoute()
 const router = useRouter()
 
+console.log('[Room] route 和 router 已初始化')
+
 const roomId = computed(() => route.params.id as string)
+
+console.log('[Room] 當前 roomId:', roomId.value)
 
 const {
   connect,
@@ -84,12 +85,15 @@ const {
   error: wsError,
   currentQuestion,
   gamePhase,
+  mvftData,
   notifyTyping,
   joinRoom,
   startGame,
   answerRelationship,
   skipQuestion,
 } = useGameWebSocket()
+
+console.log('[Room] useGameWebSocket 已初始化')
 
 const hasJoined = ref(false)
 const error = ref<string | null>(null)
@@ -100,7 +104,31 @@ const lobbyRef = ref<InstanceType<typeof GameLobby> | null>(null)
 // 建立連線
 onMounted(async () => {
   try {
-    // 檢查是否已有玩家資料
+    // ① 確認房間狀態
+    const status = await $fetch<{
+      roomId: string
+      roomName: string
+      status: string
+      isLocked: boolean
+      playerCount: number
+    }>(`/api/room/${roomId.value}/status`).catch(() => null)
+
+    if (!status) {
+      // 房間不存在
+      error.value = '房間不存在或已結束'
+      isLoading.value = false
+      return
+    }
+
+    if (status.isLocked) {
+      // 遊戲已開始 → 導向旁觀者看板
+      console.log('[Room] ✓ 偵測到遊戲已鎖定 (isLocked=true)，導向到 dashboard')
+      console.log('[Room] 導向目標:', `/room/dashboard/${roomId.value}`)
+      router.push(`/room/dashboard/${roomId.value}`)
+      return
+    }
+
+    // ② 房間尚在等待中，正常進入
     const savedPlayerId = localStorage.getItem('playerId')
     const savedRoomId = localStorage.getItem('roomId')
 
@@ -217,7 +245,7 @@ const handleStartGame = () => {
 // 處理回答問題
 const handleAnswerQuestion = (answer: { direction?: string; relation: string }) => {
   if (!currentQuestion.value) return
-  
+
   console.log('回答問題:', answer)
   answerRelationship(currentQuestion.value.questionId, answer)
 }
@@ -225,7 +253,7 @@ const handleAnswerQuestion = (answer: { direction?: string; relation: string }) 
 // 處理跳過問題
 const handleSkipQuestion = () => {
   if (!currentQuestion.value) return
-  
+
   console.log('跳過問題')
   skipQuestion(currentQuestion.value.questionId)
 }
@@ -233,7 +261,7 @@ const handleSkipQuestion = () => {
 // 處理問題超時
 const handleQuestionTimeout = () => {
   if (!currentQuestion.value) return
-  
+
   console.log('問題超時')
   skipQuestion(currentQuestion.value.questionId)
 }

@@ -19,6 +19,55 @@ export interface RelationshipQuestion {
   targetPlayerGender: 'male' | 'female' // 目標玩家（被問的人）的性別
 }
 
+export interface MvftDisplayNode {
+  id: string
+  label: string
+  gender: 'male' | 'female' | 'unknown'
+  isPlayer: boolean
+  playerId?: string
+  isVirtual: boolean
+}
+
+export interface MvftDisplayEdge {
+  from: string
+  to: string
+  type: 'parent' | 'spouse'
+  label: string
+}
+
+export interface MvftData {
+  nodes: MvftDisplayNode[]
+  edges: MvftDisplayEdge[]
+  generatedAt: number
+}
+
+// ── 旁觀者相關型別 ─────────────────────────────────────────────
+
+export interface SpectatorPlayerStatus {
+  playerId: string
+  name: string
+  isOffline: boolean
+  answeredCount: number
+  totalQuestions: number
+  currentQuestionSummary: string | null
+}
+
+export interface SpectatorAnswerRecord {
+  timestamp: number
+  playerName: string
+  playerId: string
+  summary: string
+  status: 'confirmed' | 'skipped'
+}
+
+export interface SpectatorState {
+  roomName: string
+  roomStatus: string
+  players: SpectatorPlayerStatus[]
+  answerHistory: SpectatorAnswerRecord[]
+  mvft: MvftData | null
+}
+
 export interface RoomState {
   roomId: string
   roomName: string
@@ -33,29 +82,42 @@ export interface RoomState {
 export function useGameWebSocket() {
   const ws = ref<WebSocket | null>(null)
   const isConnected = ref(false)
+  const createdRoomId = ref<string | null>(null) // 新增：追蹤房間建立
   const roomState = ref<RoomState | null>(null)
   const currentPlayer = ref<{ playerId: string; nodeId: string } | null>(null)
   const isOwner = ref(false)
   const error = ref<string | null>(null)
   const currentQuestion = ref<RelationshipQuestion | null>(null)
   const gamePhase = ref<'waiting' | 'relationship-scan' | 'in-game' | 'finished'>('waiting')
+  const mvftData = ref<MvftData | null>(null)
+  // 旁觀者狀態
+  const isSpectator = ref(false)
+  const spectatorState = ref<SpectatorState | null>(null)
 
   // 連線到 WebSocket
   const connect = () => {
-    if (ws.value) return
+    // 如果連線已存在且處於 OPEN 狀態，直接使用
+    if (ws.value && ws.value.readyState === WebSocket.OPEN) {
+      console.log('[WS] 連線已存在且處於 OPEN 狀態，無需重新連線')
+      isConnected.value = true
+      return
+    }
 
+    // 如果連線存在但正在連線中 (CONNECTING)，等待即可
+    if (ws.value && ws.value.readyState === WebSocket.CONNECTING) {
+      console.log('[WS] 連線正在建立中 (CONNECTING)...')
+      return
+    }
+
+    // 連線不存在或已關閉，建立新連線
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const wsUrl = `${protocol}//${window.location.host}/ws`
 
+    console.log('[WS] 建立新 WebSocket 連線到:', wsUrl)
     ws.value = new WebSocket(wsUrl)
 
-    // 儲存到 window 供其他組件使用
-    if (typeof window !== 'undefined') {
-      (window as any).__gameWS = ws.value
-    }
-
     ws.value.onopen = () => {
-      console.log('[WS] 連線成功')
+      console.log('[WS] ✓ onopen 觸發，連線成功')
       isConnected.value = true
       error.value = null
     }
@@ -63,6 +125,7 @@ export function useGameWebSocket() {
     ws.value.onmessage = (event: MessageEvent) => {
       try {
         const data = JSON.parse(event.data)
+        console.log('[WS] 收到訊息:', data.type)
         handleMessage(data)
       } catch (err) {
         console.error('[WS] 解析訊息失敗:', err)
@@ -70,14 +133,9 @@ export function useGameWebSocket() {
     }
 
     ws.value.onclose = () => {
-      console.log('[WS] 連線關閉')
+      console.log('[WS] ✗ 連線關閉')
       isConnected.value = false
       ws.value = null
-
-      // 清除 window 參考
-      if (typeof window !== 'undefined') {
-        delete (window as any).__gameWS
-      }
 
       // 自動重連
       setTimeout(() => {
@@ -92,7 +150,7 @@ export function useGameWebSocket() {
     }
 
     ws.value.onerror = (err: Event) => {
-      console.error('[WS] 連線錯誤:', err)
+      console.error('[WS] ✗ 連線錯誤:', err)
       error.value = '連線發生錯誤'
     }
   }
@@ -104,6 +162,7 @@ export function useGameWebSocket() {
     switch (data.type) {
       case 'room:created':
         // 房間建立成功
+        createdRoomId.value = data.roomId
         console.log('房間已建立:', data.roomId)
         break
 
@@ -112,6 +171,10 @@ export function useGameWebSocket() {
         currentPlayer.value = {
           playerId: data.playerId,
           nodeId: data.nodeId,
+        }
+        // 如果包含 isOwner，立即設置房主身份
+        if (data.isOwner !== undefined) {
+          isOwner.value = data.isOwner
         }
         // 儲存到 localStorage 以便重連
         if (roomState.value) {
@@ -181,6 +244,11 @@ export function useGameWebSocket() {
         // 階段完成
         console.log('階段完成:', data.stage)
         if (data.stage === 'relationship-scan') {
+          // 儲存骨架 MVFT（若有）
+          if (data.mvft) {
+            mvftData.value = data.mvft
+            console.log('[MVFT] 收到骨架族譜:', data.mvft.nodes.length, '節點,', data.mvft.edges.length, '邊')
+          }
           gamePhase.value = 'in-game'
           if (roomState.value) {
             roomState.value.status = 'in-game'
@@ -211,8 +279,75 @@ export function useGameWebSocket() {
         break
 
       case 'spectator:joined':
-        // 旁觀者加入
-        console.log('旁觀者模式')
+        // 蓉觀者模式 — spectator:sync 轉即跟進
+        isSpectator.value = true
+        console.log('[WS] ✓ spectator:joined 已收到，spectatorId:', data.spectatorId)
+        break
+
+      case 'spectator:sync':
+        // 旁觀者初始同步：完整房間狀態
+        console.log('[WS] ✓ spectator:sync 已收到')
+        console.log('[WS]    roomName:', data.roomName)
+        console.log('[WS]    roomStatus:', data.roomStatus)
+        console.log('[WS]    players 數量:', data.players?.length ?? 0)
+        console.log('[WS]    answerHistory 數量:', data.answerHistory?.length ?? 0)
+        console.log('[WS]    mvft:', data.mvft ? '有' : '無')
+        spectatorState.value = {
+          roomName: data.roomName,
+          roomStatus: data.roomStatus,
+          players: data.players,
+          answerHistory: data.answerHistory ?? [],
+          mvft: data.mvft ?? null,
+        }
+        console.log('[WS] ✓ spectatorState 已設置')
+        console.log('[WS] 旁觀者狀態同步完成')
+        break
+
+      case 'spectator:answer_submitted':
+        if (spectatorState.value) {
+          spectatorState.value.answerHistory.unshift({
+            timestamp: data.timestamp,
+            playerName: data.playerName,
+            playerId: data.playerId,
+            summary: data.summary,
+            status: data.status,
+          })
+          if (spectatorState.value.answerHistory.length > 50) {
+            spectatorState.value.answerHistory.pop()
+          }
+        }
+        break
+
+      case 'spectator:player_status':
+        if (spectatorState.value) {
+          const idx = spectatorState.value.players.findIndex(p => p.playerId === data.playerId)
+          const updated: SpectatorPlayerStatus = {
+            playerId: data.playerId,
+            name: data.name,
+            isOffline: data.isOffline,
+            answeredCount: data.answeredCount,
+            totalQuestions: data.totalQuestions,
+            currentQuestionSummary: data.currentQuestionSummary,
+          }
+          if (idx >= 0) {
+            spectatorState.value.players[idx] = updated
+          } else {
+            spectatorState.value.players.push(updated)
+          }
+        }
+        break
+
+      case 'spectator:tree_updated':
+        if (spectatorState.value) {
+          spectatorState.value.mvft = data.mvft
+        }
+        break
+
+      case 'spectator:redirect':
+        // 伺服器告知遊戲尚未開始，應回到加入頁
+        isSpectator.value = false
+        spectatorState.value = null
+        console.log('[WS] spectator:redirect → game not started')
         break
 
       case 'error':
@@ -228,10 +363,22 @@ export function useGameWebSocket() {
 
   // 發送訊息
   const send = (data: any) => {
+    const readyStateMap: { [key: number]: string } = {
+      0: 'CONNECTING',
+      1: 'OPEN',
+      2: 'CLOSING',
+      3: 'CLOSED',
+    }
+    const wsState = ws.value
+      ? `readyState=${ws.value.readyState} (${readyStateMap[ws.value.readyState]})`
+      : 'ws.value=null'
+    console.log('[WS] 嘗試發送訊息:', data.type, '連線狀態:', wsState)
+    
     if (ws.value && ws.value.readyState === WebSocket.OPEN) {
+      console.log('[WS] ✓ 訊息已發送:', data.type)
       ws.value.send(JSON.stringify(data))
     } else {
-      console.error('[WS] 無法發送訊息：連線未建立')
+      console.error('[WS] ✗ 無法發送訊息：連線未開放', wsState)
     }
   }
 
@@ -293,6 +440,15 @@ export function useGameWebSocket() {
     })
   }
 
+  // 以旁觀者身份進入（不需填個人資料）
+  const watchRoom = (roomId: string) => {
+    console.log('[WS] watchRoom() 被調用，roomId:', roomId)
+    send({
+      type: 'spectator:watch',
+      roomId,
+    })
+  }
+
   // 重連
   const reconnect = (roomId: string, playerId: string) => {
     send({
@@ -319,12 +475,16 @@ export function useGameWebSocket() {
   return {
     // 狀態
     isConnected,
+    createdRoomId,
     roomState,
     currentPlayer,
     isOwner,
     error,
     currentQuestion,
     gamePhase,
+    mvftData,
+    isSpectator,
+    spectatorState,
 
     // 方法
     connect,
@@ -333,6 +493,7 @@ export function useGameWebSocket() {
     notifyTyping,
     joinRoom,
     startGame,
+    watchRoom,
     answerRelationship,
     skipQuestion,
     reconnect,

@@ -1,0 +1,2 @@
+使用vue-flow搭配dagre進行族譜繪製
+人物節點使用MemberCard.vue

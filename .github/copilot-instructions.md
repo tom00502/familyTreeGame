@@ -1,5 +1,11 @@
 # 家族族譜連連看 - 產品規格書
 
+## 不要處理ts錯誤 我現在不想處理型別問題，專注在產品規格書的內容上。謝謝！
+
+## 不要處理ts錯誤 我現在不想處理型別問題，專注在產品規格書的內容上。謝謝！
+
+## 不要處理ts錯誤 我現在不想處理型別問題，專注在產品規格書的內容上。謝謝！
+
 ## 📋 產品概述
 
 **家族族譜連連看 (Family Tree Connect)** 是一款專為親戚聚會設計的實時多人協作遊戲。玩家透過回答彼此的親屬關係、填寫家族成員資訊，在限定時間內共同拼湊出完整的家族族譜。遊戲強調真實性、協作性與趣味性，讓家族成員在遊戲過程中重新認識彼此的血緣關係。
@@ -30,7 +36,8 @@ docs/ (規格文件根目錄)
 ├── features/ (業務策略層)
 │   ├─ qa_phase1_relationship_check.md (關係確認出題邏輯)
 │   ├─ qa_phase2_data_filling.md (資料填充策略)
-│   └─ qa_phase3_data_check.md (計分與結果呈現)
+│   ├─ qa_phase3_data_check.md (計分與結果呈現)
+│   └─ spectator_mode.md (旁觀者看板、答題監測、即時族譜)
 │
 ├── technical/ (技術實作層)
 │   ├─ dag_traversal.md (DAG 遍歷演算法)
@@ -45,57 +52,68 @@ docs/ (規格文件根目錄)
 
 ### 按角色選擇閱讀資料夾
 
-| 角色 | 必讀 | 推薦 | 參考 |
-|------|------|------|------|
-| **新進人員/PM** | concepts/、features/ | management/、design/ | technical/ |
-| **後端工程師** | concepts/、management/ | technical/ | design/、features/ |
-| **演算法/資料庫** | concepts/、technical/ | management/ | features/、design/ |
-| **前端工程師** | concepts/、design/ | features/ (計分呈現) | management/ (WebSocket)、technical/ |
-| **UI/UX 設計師** | concepts/、design/ | features/ (UX 流程) | management/、technical/ |
-| **遊戲設計師** | concepts/、features/ | management/、design/ | technical/ |
+| 角色              | 必讀                   | 推薦                 | 參考                                |
+| ----------------- | ---------------------- | -------------------- | ----------------------------------- |
+| **新進人員/PM**   | concepts/、features/   | management/、design/ | technical/                          |
+| **後端工程師**    | concepts/、management/ | technical/           | design/、features/                  |
+| **演算法/資料庫** | concepts/、technical/  | management/          | features/、design/                  |
+| **前端工程師**    | concepts/、design/     | features/ (計分呈現) | management/ (WebSocket)、technical/ |
+| **UI/UX 設計師**  | concepts/、design/     | features/ (UX 流程)  | management/、technical/             |
+| **遊戲設計師**    | concepts/、features/   | management/、design/ | technical/                          |
 
 ### 資料夾說明
 
 #### 📁 concepts/ (核心概念層)
+
 **用途**：定義貫穿整個系統的基礎術語與概念  
 **特點**：被所有其他文檔引用，新進人員必讀  
 **主要檔案**：
+
 - [mvft.md](../docs/concepts/mvft.md) - 最小可行族譜定義、關鍵路徑、核心家庭單元、任務優先級
 
 **適合讀者**：所有人（建議首先閱讀）
 
 #### 📁 management/ (管理層)
+
 **用途**：處理遊戲「開始前」與「結束後」的基礎建設  
 **特點**：與族譜演算法無關，專注於伺服器連線、房間狀態、即時通訊  
 **主要檔案**：
+
 - [room_management.md](../docs/management/room_management.md) - 房間生命週期、玩家狀態、WebSocket 心跳、自動重連、特殊情況處理
 
 **適合讀者**：後端工程師、DevOps、系統架構師
 
 #### 📁 features/ (業務策略層)
+
 **用途**：實現遊戲玩法的「策略層」，不談程式碼實作，只談邏輯設計  
 **核心問題**：
+
 - 系統要問什麼？
 - 什麼時候切換階段？
 - 分數怎麼算？
 - 資料怎麼驗證？
 
 **主要檔案**：
+
 - [qa_phase1_relationship_check.md](../docs/features/qa_phase1_relationship_check.md) - 關係確認階段的出題邏輯、二階段追問、虛擬節點生成
 - [qa_phase2_data_filling.md](../docs/features/qa_phase2_data_filling.md) - 資料填充階段的任務派發策略、MVFT 概念、獨佔提問規則
 - [qa_phase3_data_check.md](../docs/features/qa_phase3_data_check.md) - 結算階段的資料驗證、衝突解決、計分系統、排名機制
+- [spectator_mode.md](../docs/features/spectator_mode.md) - 旁觀者看板、答題監測、即時族譜、權限限制
 
 **適合讀者**：產品經理、遊戲設計師、業務分析師、前端（特別是 UX 流程部分）
 
 #### 📁 technical/ (技術實作層)
+
 **用途**：「冷冰冰的技術」，提供實作細節給工程師  
 **核心問題**：
+
 - DAG 怎麼遍歷？
 - 如何處理併發衝突？
 - 效能瓶頸在哪？
 - 如何最佳化查詢？
 
 **主要檔案**：
+
 - dag_traversal.md - 有向無環圖遞歸、BFS/DFS 策略、路徑查詢
 - concurrency_lock.md - 併發鎖實作、樂觀/悲觀鎖選擇、事務隔離
 - conflict_resolution.md - 衝突偵測演算法、優先級規則、自動合併策略
@@ -103,8 +121,10 @@ docs/ (規格文件根目錄)
 **適合讀者**：演算法工程師、後端核心開發、資料庫優化工程師
 
 #### 📁 design/ (視覺規範層)
+
 **用途**：統一視覺語言，確保設計與前端的一致性  
 **核心內容**：
+
 - 配色、排版、圖示規範
 - 動畫效果與轉場邏輯
 - 配偶合併、性別顯示規範
@@ -112,6 +132,7 @@ docs/ (規格文件根目錄)
 - 可及性檢查清單
 
 **主要檔案**：
+
 - visual_system.md - 配色方案、字體、組件設計、間距規則
 - animation_specs.md - 大揭曉動畫、轉場效果、載入狀態視覺反饋
 - spouse_merge_guide.md - 配偶節點合併視覺表現、性別顯示、關係線繪製
@@ -238,6 +259,17 @@ docs/ (規格文件根目錄)
 **第三階段（資料確認）** → [qa_phase3_data_check.md](../docs/features/qa_phase3_data_check.md)
 
 問題模板詳見各階段規格文件中的**提問問題模板表**部分。
+
+### 旁觀系統
+
+旁觀系統可以觀察遊戲過程但不參與遊戲，詳見 [spectator_mode.md](../docs/features/spectator_mode.md)
+
+此章節涵蓋：
+
+- 旁觀者看板（答題監測區塊 + 即時族譜區塊）
+- 答題歷史紀錄與玩家狀態列表
+- 即時族譜節點更新機制與動畫
+- 旁觀者權限限制與 WebSocket 事件同步
 
 ### 計分系統
 

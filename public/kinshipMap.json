@@ -11,6 +11,7 @@
   },
   "son": {
     "gender": "M",
+    "titles": { "M": "兒子", "F": "兒子" },
     "edges": [
       { "type": "P_f", "target": "self" },
       { "type": "P_m", "target": "spouse" },
@@ -20,6 +21,7 @@
   },
   "daughter": {
     "gender": "F",
+    "titles": { "M": "女兒", "F": "女兒" },
     "edges": [
       { "type": "P_f", "target": "self" },
       { "type": "P_m", "target": "spouse" },
@@ -29,6 +31,7 @@
   },
   "spouse": {
     "gender": "any",
+    "titles": { "M": "丈夫", "F": "妻子" },
     "edges": [
       { "type": "S", "target": "self" },
       { "type": "C_m", "target": "son" },
@@ -42,7 +45,8 @@
       { "type": "P_any", "target": "paternal_great_grandparents_unit" },
       { "type": "S", "target": "paternal_grandmother" },
       { "type": "C_any", "target": "father" },
-      { "type": "C_any", "target": "paternal_uncle_aunt" }
+      { "type": "C_m", "target": "paternal_uncle" },
+      { "type": "C_f", "target": "paternal_aunt" }
     ]
   },
   "paternal_grandmother": {
@@ -52,7 +56,8 @@
       { "type": "P_any", "target": "paternal_great_grandparents_unit" },
       { "type": "S", "target": "paternal_grandfather" },
       { "type": "C_any", "target": "father" },
-      { "type": "C_any", "target": "paternal_uncle_aunt" }
+      { "type": "C_m", "target": "paternal_uncle" },
+      { "type": "C_f", "target": "paternal_aunt" }
     ]
   },
   "maternal_grandfather": {
@@ -77,6 +82,7 @@
   },
   "father": {
     "gender": "M",
+    "titles": { "M": "爸爸", "F": "爸爸" },
     "edges": [
       { "type": "P_f", "target": "paternal_grandfather" },
       { "type": "P_m", "target": "paternal_grandmother" },
@@ -87,6 +93,7 @@
   },
   "mother": {
     "gender": "F",
+    "titles": { "M": "媽媽", "F": "媽媽" },
     "edges": [
       { "type": "P_f", "target": "maternal_grandfather" },
       { "type": "P_m", "target": "maternal_grandmother" },
@@ -105,18 +112,39 @@
       { "type": "C_any", "target": "nephew_niece" }
     ]
   },
-  "paternal_uncle_aunt": {
-    "gender": "any",
-    "titles": { "M": "叔伯", "F": "姑姑" },
+  "paternal_uncle": {
+    "gender": "M",
+    "titles": { "M": "叔伯", "F": "叔伯" },
     "edges": [
       { "type": "P_any", "target": "paternal_grandparents_unit" },
       { "type": "C_any", "target": "paternal_cousin" }
     ]
   },
+  "paternal_aunt": {
+    "gender": "F",
+    "titles": { "M": "姑姑", "F": "姑姑" },
+    "edges": [
+      { "type": "P_any", "target": "paternal_grandparents_unit" },
+      { "type": "C_any", "target": "maternal_cousin" }
+    ]
+  },
   "paternal_cousin": {
     "gender": "any",
     "titles": { "M": "堂兄弟", "F": "堂姊妹" },
-    "edges": [{ "type": "P_any", "target": "paternal_uncle_aunt" }]
+    "edges": [{ "type": "P_f", "target": "paternal_uncle" }]
+  },
+  "grandson": {
+    "gender": "any",
+    "titles": { "M": "孫子", "F": "孫女" },
+    "edges": [
+      { "type": "P_any", "target": "son" },
+      { "type": "P_any", "target": "daughter" }
+    ]
+  },
+  "nephew_niece": {
+    "gender": "any",
+    "titles": { "M": "侄子", "F": "侄女" },
+    "edges": [{ "type": "P_any", "target": "sibling" }]
   },
   "maternal_uncle_aunt": {
     "gender": "any",
@@ -136,7 +164,8 @@
     "edges": [
       { "type": "P_any", "target": "paternal_great_grandparents_unit" },
       { "type": "C_any", "target": "father" },
-      { "type": "C_any", "target": "paternal_uncle_aunt" }
+      { "type": "C_m", "target": "paternal_uncle" },
+      { "type": "C_f", "target": "paternal_aunt" }
     ]
   },
   "maternal_grandparents_unit": {
@@ -145,6 +174,22 @@
       { "type": "P_any", "target": "maternal_great_grandparents_unit" },
       { "type": "C_any", "target": "mother" },
       { "type": "C_any", "target": "maternal_uncle_aunt" }
+    ]
+  },
+  "paternal_great_grandparents_unit": {
+    "gender": "any",
+    "titles": { "M": "曾祖父", "F": "曾祖母" },
+    "edges": [
+      { "type": "C_any", "target": "paternal_grandfather" },
+      { "type": "C_any", "target": "paternal_grandmother" }
+    ]
+  },
+  "maternal_great_grandparents_unit": {
+    "gender": "any",
+    "titles": { "M": "外曾祖父", "F": "外曾祖母" },
+    "edges": [
+      { "type": "C_any", "target": "maternal_grandfather" },
+      { "type": "C_any", "target": "maternal_grandmother" }
     ]
   }
 }

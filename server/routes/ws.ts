@@ -1,17 +1,19 @@
 import type { Peer } from "crossws";
 import { gameState } from "../utils/gameState";
-import type { Room, Player, FamilyNode } from "../utils/gameState";
+import type { Room, Player, FamilyNode, RelationshipRecord, Spectator, AnswerRecord } from "../utils/gameState";
 import {
   handleOwnerDisconnection,
   validatePlayerInfo,
   checkAllPlayersReady,
 } from "../utils/roomManager";
+import { titleToPath, buildSkeletonMvft } from "../utils/mvftBuilder";
 
 interface GamePeer extends Peer {
   playerId?: string;
   roomId?: string;
   playerName?: string;
   isOwner?: boolean;
+  isSpectatorPeer?: boolean;
 }
 
 const connections = new Map<string, GamePeer>();
@@ -37,12 +39,16 @@ export default defineWebSocketHandler({
           gameTime: data.gameTime,
           players: new Map(),
           familyTree: { nodes: new Map(), rootNodes: [] },
+          relationships: [],
+          mvft: null,
           taskQueue: [],
           completedTasks: [],
           controllerId: peer.id,
           originalOwnerId: undefined,
           isLocked: false,
           createdAt: Date.now(),
+          spectators: new Map(),
+          answerHistory: [],
         };
 
         gameState.rooms.set(roomId, room);
@@ -71,6 +77,56 @@ export default defineWebSocketHandler({
             timestamp: Date.now(),
           });
         }
+      }
+
+      // 旁觀者：直接進入看板（不需填姓名/性別/生日）
+      if (data.type === "spectator:watch") {
+        const { roomId } = data;
+        console.log(`[WS] 收到 spectator:watch，roomId: ${roomId}`);
+        
+        const room = gameState.rooms.get(roomId);
+
+        if (!room) {
+          console.log(`[WS] ✗ 房間不存在: ${roomId}`);
+          peer.send(JSON.stringify({ type: "error", message: "房間不存在" }));
+          return;
+        }
+
+        console.log(`[WS] ✓ 房間存在: ${roomId}, isLocked: ${room.isLocked}, 玩家數: ${room.players.size}`);
+
+        if (!room.isLocked) {
+          // 遊戲尚未開始，導回加入頁
+          console.log(`[WS] ⚠️  遊戲尚未開始 (isLocked=false)，發送 spectator:redirect`);
+          peer.send(JSON.stringify({ type: "spectator:redirect", target: "join" }));
+          return;
+        }
+
+        const spectatorId = crypto.randomUUID();
+        const spectator: Spectator = {
+          spectatorId,
+          socketId: peer.id,
+          name: "旁觀者",
+          joinedAt: Date.now(),
+        };
+        room.spectators.set(spectatorId, spectator);
+
+        gamePeer.playerId = spectatorId;
+        gamePeer.roomId = roomId;
+        gamePeer.playerName = "旁觀者";
+        gamePeer.isSpectatorPeer = true;
+
+        console.log(`[WS] 發送 spectator:joined`);
+        peer.send(JSON.stringify({
+          type: "spectator:joined",
+          spectatorId,
+        }));
+
+        // 傳送完整即時狀態
+        const syncData = buildSpectatorSync(room);
+        console.log(`[WS] 發送 spectator:sync: ${syncData.players.length} 玩家, ${syncData.answerHistory.length} 答題紀錄, mvft=${!!syncData.mvft}`);
+        peer.send(JSON.stringify(syncData));
+
+        console.log(`[Room] ✓ 旁觀者加入: ${roomId}`);
       }
 
       // 成員加入
@@ -104,24 +160,31 @@ export default defineWebSocketHandler({
         if (room.isLocked) {
           // 設為旁觀者
           const spectatorId = crypto.randomUUID();
+          const spectator: Spectator = {
+            spectatorId,
+            socketId: peer.id,
+            name,
+            joinedAt: Date.now(),
+          };
+          room.spectators.set(spectatorId, spectator);
+
           gamePeer.playerId = spectatorId;
           gamePeer.roomId = roomId;
           gamePeer.playerName = name;
+          gamePeer.isSpectatorPeer = true;
 
+          // 告知此連線已成為旁觀者
           peer.send(
             JSON.stringify({
               type: "spectator:joined",
               spectatorId,
-              message: "遊戲進行中,您以旁觀者身份加入",
+              message: "遊戲進行中，您以旁觀者身份加入",
             })
           );
 
-          broadcastToRoom(roomId, peer.id, {
-            type: "spectator:joined",
-            spectatorId,
-            name,
-          });
-          
+          // 同步完整房間狀態給旁觀者
+          peer.send(JSON.stringify(buildSpectatorSync(room)));
+
           console.log(`[Room] 旁觀者加入: ${name} -> ${roomId}`);
           return;
         }
@@ -179,10 +242,11 @@ export default defineWebSocketHandler({
               type: "player_registered",
               playerId: newPlayerId,
               nodeId,
+              isOwner: gamePeer.isOwner,
             })
           );
           
-          console.log(`[Room] 玩家加入: ${name} -> ${roomId}`);
+          console.log(`[Room] 玩家加入: ${name} -> ${roomId} (房主: ${gamePeer.isOwner})`);
         }
 
         gamePeer.playerId = player.playerId;
@@ -275,8 +339,51 @@ export default defineWebSocketHandler({
         }
         
         console.log(`[Question] 玩家 ${gamePeer.playerName} 回答問題 ${player.currentQuestionIndex! + 1}/${player.questionQueue.length}:`, answer);
+
+        // ── 推送答題紀錄給旁觀者 ──────────────────────────────
+        const answeredCount = (player.answeredQuestions || 0) + 1;
+        const answerSummary = (answer.relation && answer.relation !== '跳過')
+          ? `確認「${currentQuestion.targetPlayerName}」是${answer.relation}`
+          : `跳過「${currentQuestion.targetPlayerName}」的關係問題`;
+        const answerStatus = (answer.relation && answer.relation !== '跳過') ? 'confirmed' : 'skipped';
         
-        // 記錄答案（TODO: 保存到族譜結構）
+        const record: AnswerRecord = {
+          timestamp: Date.now(),
+          playerName: player.name,
+          playerId: player.playerId,
+          summary: answerSummary,
+          status: answerStatus,
+        };
+        room.answerHistory.unshift(record);
+        if (room.answerHistory.length > 50) room.answerHistory.pop();
+
+        broadcastToSpectators(roomId, { type: 'spectator:answer_submitted', ...record });
+        broadcastToSpectators(roomId, buildSpectatorPlayerStatus(player, answeredCount));
+        
+        // ── 建立關係紀錄並儲存至 room.relationships ──
+        if (answer.relation && answer.relation !== '跳過' && answer.direction !== 'unknown') {
+          const pathDef = titleToPath(answer.relation);
+          if (pathDef) {
+            const targetPlayer = Array.from(room.players.values()).find(
+              p => p.playerId === currentQuestion.targetPlayerId
+            );
+            if (targetPlayer) {
+              const record: RelationshipRecord = {
+                subjectPlayerId: playerId,
+                objectPlayerId: currentQuestion.targetPlayerId,
+                subjectNodeId: player.nodeId,
+                objectNodeId: targetPlayer.nodeId,
+                direction: answer.direction || '',
+                title: answer.relation,
+                path: pathDef.path,
+                roleLabels: pathDef.roleLabels ?? [],
+              };
+              room.relationships.push(record);
+              console.log(`[MVFT] 紀錄關係: ${player.name} → ${targetPlayer.name} (${answer.relation}) path=${pathDef.path.join(',')}}`);
+            }
+          }
+        }
+        
         player.answeredQuestions = (player.answeredQuestions || 0) + 1;
         player.currentQuestionIndex = (player.currentQuestionIndex || 0) + 1;
         
@@ -320,7 +427,21 @@ export default defineWebSocketHandler({
         }
         
         console.log(`[Question] 玩家 ${gamePeer.playerName} 跳過問題 ${player.currentQuestionIndex! + 1}/${player.questionQueue.length}`);
-        
+
+        // ── 推送跳過紀錄給旁觀者 ─────────────────────────────
+        const skipCount = (player.answeredQuestions || 0) + 1;
+        const skipRecord: AnswerRecord = {
+          timestamp: Date.now(),
+          playerName: player.name,
+          playerId: player.playerId,
+          summary: `跳過「${currentQuestion.targetPlayerName}」的關係問題`,
+          status: 'skipped',
+        };
+        room.answerHistory.unshift(skipRecord);
+        if (room.answerHistory.length > 50) room.answerHistory.pop();
+        broadcastToSpectators(roomId, { type: 'spectator:answer_submitted', ...skipRecord });
+        broadcastToSpectators(roomId, buildSpectatorPlayerStatus(player, skipCount));
+
         // 記錄跳過
         player.answeredQuestions = (player.answeredQuestions || 0) + 1;
         player.currentQuestionIndex = (player.currentQuestionIndex || 0) + 1;
@@ -411,6 +532,14 @@ export default defineWebSocketHandler({
     if (gamePeer.roomId && gamePeer.playerId) {
       const room = gameState.rooms.get(gamePeer.roomId);
       if (room) {
+        // 旁觀者離線 → 從 spectators map 移除
+        if (gamePeer.isSpectatorPeer) {
+          room.spectators.delete(gamePeer.playerId);
+          console.log(`[Room] 旁觀者離線: ${gamePeer.playerName}`);
+          connections.delete(peer.id);
+          return;
+        }
+
         const player = room.players.get(gamePeer.playerId);
         if (player) {
           player.isOffline = true;
@@ -435,6 +564,12 @@ export default defineWebSocketHandler({
             name: player.name,
           });
 
+          // 通知旁觀者：玩家離線
+          broadcastToSpectators(gamePeer.roomId, {
+            ...buildSpectatorPlayerStatus(player, player.answeredQuestions || 0),
+            isOffline: true,
+          });
+
           syncRoomState(room);
           console.log(`[Room] 玩家離線: ${player.name}`);
         }
@@ -448,6 +583,62 @@ export default defineWebSocketHandler({
     console.error(`[WS] 錯誤 (${peer.id}):`, error);
   },
 });
+
+// ── 旁觀者相關工具函式 ────────────────────────────────────────────
+
+/** 廣播訊息給房間內所有旁觀者 */
+function broadcastToSpectators(roomId: string, message: any) {
+  const room = gameState.rooms.get(roomId);
+  if (!room) return;
+  const messageStr = JSON.stringify(message);
+  room.spectators.forEach((spectator) => {
+    const conn = connections.get(spectator.socketId);
+    if (conn) conn.send(messageStr);
+  });
+}
+
+/** 建立給旁觀者的完整初始同步資料 */
+function buildSpectatorSync(room: Room) {
+  const players = Array.from(room.players.values())
+    .filter(p => !p.isObserver)
+    .map(p => {
+      const status = buildSpectatorPlayerStatus(p, p.answeredQuestions || 0);
+      // 移除 type 字段，因為 players 陣列本身就在 spectator:sync 訊息中
+      const { type, ...playerData } = status;
+      return playerData;
+    });
+
+  return {
+    type: 'spectator:sync',
+    roomName: room.roomName,
+    roomStatus: room.status,
+    players,
+    answerHistory: room.answerHistory,
+    mvft: room.mvft,
+  };
+}
+
+/** 建立單一玩家的旁觀者狀態物件 */
+function buildSpectatorPlayerStatus(player: Player, answeredCount: number) {
+  const total = player.questionQueue?.length ?? 0;
+  const nextQ = player.questionQueue && player.currentQuestionIndex !== undefined
+    ? player.questionQueue[player.currentQuestionIndex]
+    : null;
+  const currentQuestionSummary = nextQ
+    ? `確認與「${nextQ.targetPlayerName}」的關係`
+    : null;
+  return {
+    type: 'spectator:player_status',
+    playerId: player.playerId,
+    name: player.name,
+    isOffline: player.isOffline,
+    answeredCount,
+    totalQuestions: total,
+    currentQuestionSummary,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────
 
 // 輔助函數：廣播訊息給房間內所有玩家（排除指定 socketId）
 function broadcastToRoom(roomId: string, excludeSocketId: string, message: any) {
@@ -582,6 +773,9 @@ function sendNextQuestion(room: Room, player: Player) {
   if (player.currentQuestionIndex >= player.questionQueue.length) {
     console.log(`[Question] 玩家 ${player.name} 已完成所有問題 (${player.answeredQuestions}/${player.questionQueue.length})`);
     
+    // 通知旁觀者：玩家已完成所有問題（currentQuestionSummary = null）
+    broadcastToSpectators(room.roomId, buildSpectatorPlayerStatus(player, player.answeredQuestions || 0));
+
     // 檢查是否所有玩家都完成了
     checkAllQuestionsCompleted(room);
     return;
@@ -604,6 +798,11 @@ function sendNextQuestion(room: Room, player: Player) {
     
     console.log(`[Question] 發送問題 ${player.currentQuestionIndex + 1}/${player.questionQueue.length} 給 ${player.name}: ${question.targetPlayerName} 是你的誰？`);
   }
+
+  // 通知旁觀者：玩家目前作答行動測更新
+  if (room) {
+    broadcastToSpectators(room.roomId, buildSpectatorPlayerStatus(player, player.answeredQuestions || 0));
+  }
 }
 
 // 檢查是否所有玩家都完成問題
@@ -617,6 +816,21 @@ function checkAllQuestionsCompleted(room: Room) {
   
   if (allCompleted) {
     console.log(`[Question] 所有玩家已完成關係掃描階段`);
+    console.log(`[MVFT] 共收集 ${room.relationships.length} 筆關係紀錄，開始生成骨架 MVFT...`);
+    
+    // ── 生成骨架 MVFT ───────────────────────────────────────────
+    const playerInfoList = Array.from(room.players.values()
+    ).filter(p => !p.isObserver).map(p => ({
+      playerId: p.playerId,
+      nodeId: p.nodeId,
+      name: p.name,
+      gender: p.gender,
+    }));
+    
+    const mvft = buildSkeletonMvft(room.relationships, playerInfoList);
+    room.mvft = mvft;
+    
+    console.log(`[MVFT] 生成完成：${mvft.nodes.length} 個節點，${mvft.edges.length} 條邊`);
     
     // 進入下一階段
     room.status = "in-game";
@@ -625,6 +839,13 @@ function checkAllQuestionsCompleted(room: Room) {
       type: "stage_completed",
       stage: "relationship-scan",
       nextStage: "in-game",
+      mvft,  // 附帶 MVFT 資料
+    });
+
+    // 通知旁觀者：族譜醫架就緒
+    broadcastToSpectators(room.roomId, {
+      type: 'spectator:tree_updated',
+      mvft,
     });
   }
 }

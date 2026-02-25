@@ -258,79 +258,86 @@
 
 本表基於 [kinshipMap.json](/public/kinshipMap.json)，展示每個節點的稱謂 Key、性別、標題與邊定義（含五等親）。用於校對邊類型與目標節點是否正確。
 
-| 節點 Key                       | 性別 | 稱謂 (Male / Female) | Edges 類型 | Target 節點            | 說明                     |
-| ------------------------------ | ---- | -------------------- | ---------- | ---------------------- | ------------------------ |
-| **self**                       | any  | (自己)               | P_f        | father                 | 向上 → 父親              |
-|                                |      |                      | P_m        | mother                 | 向上 → 母親              |
-|                                |      |                      | S          | spouse                 | 水平 → 配偶              |
-|                                |      |                      | C_m        | son                    | 向下 → 兒子              |
-|                                |      |                      | C_f        | daughter               | 向下 → 女兒              |
-| **father**                     | M    | (爸爸)               | P_f        | paternal_grandfather   | 向上 → 祖父(父側)        |
-|                                |      |                      | P_m        | paternal_grandmother   | 向上 → 祖母(父側)        |
-|                                |      |                      | S          | mother                 | 水平 → 配偶(母親)        |
-|                                |      |                      | C_any      | self                   | 向下 → 子女(自己)        |
-|                                |      |                      | C_any      | sibling                | 向下 → 子女(兄弟/姊妹)   |
-| **mother**                     | F    | (媽媽)               | P_f        | maternal_grandfather   | 向上 → 祖父(母側)        |
-|                                |      |                      | P_m        | maternal_grandmother   | 向上 → 祖母(母側)        |
-|                                |      |                      | S          | father                 | 水平 → 配偶(父親)        |
-|                                |      |                      | C_any      | self                   | 向下 → 子女(自己)        |
-|                                |      |                      | C_any      | sibling                | 向下 → 子女(兄弟/姊妹)   |
-| **son**                        | M    | (兒子)               | P_f        | (father - 自己的父親)  | 向上 → 父親              |
-|                                |      |                      | P_m        | (mother - 自己的母親)  | 向上 → 母親              |
-|                                |      |                      | S          | (配偶 - 媳婦)          | 水平 → 配偶              |
-|                                |      |                      | C_any      | (孫子/孫女)            | 向下 → 子女              |
-| **daughter**                   | F    | (女兒)               | P_f        | (father - 自己的父親)  | 向上 → 父親              |
-|                                |      |                      | P_m        | (mother - 自己的母親)  | 向上 → 母親              |
-|                                |      |                      | S          | (配偶 - 女婿)          | 水平 → 配偶              |
-|                                |      |                      | C_any      | (孫子/孫女)            | 向下 → 子女              |
-| **spouse**                     | M/F  | (配偶/伴侶)          | P_f        | (spouse 的父親)        | 向上 → 父親              |
-|                                |      |                      | P_m        | (spouse 的母親)        | 向上 → 母親              |
-|                                |      |                      | S          | self                   | 水平 → 配偶(回到自己)    |
-|                                |      |                      | C_any      | (配偶的子女)           | 向下 → 配偶的子女        |
-| **paternal_grandfather**       | M    | 祖父(父側)           | P_f        | 曾祖父(父側)           | 向上 → 曾祖父            |
-|                                |      |                      | P_m        | 曾祖母(父側)           | 向上 → 曾祖母            |
-|                                |      |                      | S          | paternal_grandmother   | 水平 → 配偶(祖母)        |
-|                                |      |                      | C_any      | father                 | 向下 → 子女(父親)        |
-|                                |      |                      | C_any      | paternal_uncle_aunt    | 向下 → 子女(叔伯/姑姑)   |
-| **paternal_grandmother**       | F    | 祖母(父側)           | P_f        | 曾祖父(父側)           | 向上 → 曾祖父            |
-|                                |      |                      | P_m        | 曾祖母(父側)           | 向上 → 曾祖母            |
-|                                |      |                      | S          | paternal_grandfather   | 水平 → 配偶(祖父)        |
-|                                |      |                      | C_any      | father                 | 向下 → 子女(父親)        |
-|                                |      |                      | C_any      | paternal_uncle_aunt    | 向下 → 子女(叔伯/姑姑)   |
-| **maternal_grandfather**       | M    | 祖父(母側)/外公      | P_f        | 曾祖父(母側)           | 向上 → 曾祖父            |
-|                                |      |                      | P_m        | 曾祖母(母側)           | 向上 → 曾祖母            |
-|                                |      |                      | S          | maternal_grandmother   | 水平 → 配偶(祖母/外婆)   |
-|                                |      |                      | C_any      | mother                 | 向下 → 子女(母親)        |
-|                                |      |                      | C_any      | maternal_uncle_aunt    | 向下 → 子女(舅舅/阿姨)   |
-| **maternal_grandmother**       | F    | 祖母(母側)/外婆      | P_f        | 曾祖父(母側)           | 向上 → 曾祖父            |
-|                                |      |                      | P_m        | 曾祖母(母側)           | 向上 → 曾祖母            |
-|                                |      |                      | S          | maternal_grandfather   | 水平 → 配偶(祖父/外公)   |
-|                                |      |                      | C_any      | mother                 | 向下 → 子女(母親)        |
-|                                |      |                      | C_any      | maternal_uncle_aunt    | 向下 → 子女(舅舅/阿姨)   |
-| **paternal_uncle_aunt**        | any  | 叔伯 / 姑姑          | P_f        | paternal_grandfather   | 向上 → 祖父(父側)        |
-|                                |      |                      | P_m        | paternal_grandmother   | 向上 → 祖母(父側)        |
-|                                |      |                      | S          | (配偶 - 嬸嬸/伯母等)   | 水平 → 配偶              |
-|                                |      |                      | C_any      | paternal_cousin        | 向下 → 子女(堂兄弟/姊妹) |
-| **sibling**                    | any  | 兄弟 / 姊妹          | P_f        | father                 | 向上 → 父親(共同父親)    |
-|                                |      |                      | P_m        | mother                 | 向上 → 母親(共同母親)    |
-|                                |      |                      | S          | sibling_spouse         | 水平 → 配偶(兄嫂/弟妹等) |
-|                                |      |                      | C_any      | nephew_niece           | 向下 → 子女(姪子/姪女)   |
-| **paternal_cousin**            | any  | 堂兄弟 / 堂姊妹      | P_any      | paternal_uncle_aunt    | 向上 → 父親(叔伯/姑姑)   |
-|                                |      |                      | S          | (配偶 - 堂嫂/堂妹夫等) | 水平 → 配偶              |
-|                                |      |                      | C_any      | (堂侄/堂姪)            | 向下 → 子女              |
-| **maternal_uncle_aunt**        | any  | 舅舅 / 阿姨          | P_f        | maternal_grandfather   | 向上 → 祖父(母側)        |
-|                                |      |                      | P_m        | maternal_grandmother   | 向上 → 祖母(母側)        |
-|                                |      |                      | S          | (配偶 - 舅媽/阿姨夫等) | 水平 → 配偶              |
-|                                |      |                      | C_any      | maternal_cousin        | 向下 → 子女(表兄弟/姊妹) |
-| **maternal_cousin**            | any  | 表兄弟 / 表姊妹      | P_any      | maternal_uncle_aunt    | 向上 → 父親(舅舅/阿姨)   |
-|                                |      |                      | S          | (配偶 - 表嫂/表妹夫等) | 水平 → 配偶              |
-|                                |      |                      | C_any      | (表侄/表姪)            | 向下 → 子女              |
-| **paternal_grandparents_unit** | any  | 祖父母(父側)聯合單位 | P_any      | 曾祖父母(父側)         | 向上 → 曾祖父母          |
-|                                |      |                      | C_any      | father                 | 向下 → 子女(父親)        |
-|                                |      |                      | C_any      | paternal_uncle_aunt    | 向下 → 子女(叔伯/姑姑)   |
-| **maternal_grandparents_unit** | any  | 祖父母(母側)聯合單位 | P_any      | 曾祖父母(母側)         | 向上 → 曾祖父母          |
-|                                |      |                      | C_any      | mother                 | 向下 → 子女(母親)        |
-|                                |      |                      | C_any      | maternal_uncle_aunt    | 向下 → 子女(舅舅/阿姨)   |
+| 節點 Key                       | 性別 | 稱謂 (Male / Female) | Edges 類型 | Target 節點            | 說明                         |
+| ------------------------------ | ---- | -------------------- | ---------- | ---------------------- | ---------------------------- |
+| **self**                       | any  | (自己)               | P_f        | father                 | 向上 → 父親                  |
+|                                |      |                      | P_m        | mother                 | 向上 → 母親                  |
+|                                |      |                      | S          | spouse                 | 水平 → 配偶                  |
+|                                |      |                      | C_m        | son                    | 向下 → 兒子                  |
+|                                |      |                      | C_f        | daughter               | 向下 → 女兒                  |
+| **father**                     | M    | (爸爸)               | P_f        | paternal_grandfather   | 向上 → 祖父(父側)            |
+|                                |      |                      | P_m        | paternal_grandmother   | 向上 → 祖母(父側)            |
+|                                |      |                      | S          | mother                 | 水平 → 配偶(母親)            |
+|                                |      |                      | C_any      | self                   | 向下 → 子女(自己)            |
+|                                |      |                      | C_any      | sibling                | 向下 → 子女(兄弟/姊妹)       |
+| **mother**                     | F    | (媽媽)               | P_f        | maternal_grandfather   | 向上 → 祖父(母側)            |
+|                                |      |                      | P_m        | maternal_grandmother   | 向上 → 祖母(母側)            |
+|                                |      |                      | S          | father                 | 水平 → 配偶(父親)            |
+|                                |      |                      | C_any      | self                   | 向下 → 子女(自己)            |
+|                                |      |                      | C_any      | sibling                | 向下 → 子女(兄弟/姊妹)       |
+| **son**                        | M    | (兒子)               | P_f        | (father - 自己的父親)  | 向上 → 父親                  |
+|                                |      |                      | P_m        | (mother - 自己的母親)  | 向上 → 母親                  |
+|                                |      |                      | S          | (配偶 - 媳婦)          | 水平 → 配偶                  |
+|                                |      |                      | C_any      | (孫子/孫女)            | 向下 → 子女                  |
+| **daughter**                   | F    | (女兒)               | P_f        | (father - 自己的父親)  | 向上 → 父親                  |
+|                                |      |                      | P_m        | (mother - 自己的母親)  | 向上 → 母親                  |
+|                                |      |                      | S          | (配偶 - 女婿)          | 水平 → 配偶                  |
+|                                |      |                      | C_any      | (孫子/孫女)            | 向下 → 子女                  |
+| **spouse**                     | M/F  | (配偶/伴侶)          | P_f        | (spouse 的父親)        | 向上 → 父親                  |
+|                                |      |                      | P_m        | (spouse 的母親)        | 向上 → 母親                  |
+|                                |      |                      | S          | self                   | 水平 → 配偶(回到自己)        |
+|                                |      |                      | C_any      | (配偶的子女)           | 向下 → 配偶的子女            |
+| **paternal_grandfather**       | M    | 祖父(父側)           | P_f        | 曾祖父(父側)           | 向上 → 曾祖父                |
+|                                |      |                      | P_m        | 曾祖母(父側)           | 向上 → 曾祖母                |
+|                                |      |                      | S          | paternal_grandmother   | 水平 → 配偶(祖母)            |
+|                                |      |                      | C_any      | father                 | 向下 → 子女(父親)            |
+|                                |      |                      | C_m        | paternal_uncle         | 向下 → 兒子(叔伯)            |
+|                                |      |                      | C_f        | paternal_aunt          | 向下 → 兒女(姑姑)            |
+| **paternal_grandmother**       | F    | 祖母(父側)           | P_f        | 曾祖父(父側)           | 向上 → 曾祖父                |
+|                                |      |                      | P_m        | 曾祖母(父側)           | 向上 → 曾祖母                |
+|                                |      |                      | S          | paternal_grandfather   | 水平 → 配偶(祖父)            |
+|                                |      |                      | C_any      | father                 | 向下 → 子女(父親)            |
+|                                |      |                      | C_m        | paternal_uncle         | 向下 → 兒子(叔伯)            |
+|                                |      |                      | C_f        | paternal_aunt          | 向下 → 兒女(姑姑)            |
+| **maternal_grandfather**       | M    | 祖父(母側)/外公      | P_f        | 曾祖父(母側)           | 向上 → 曾祖父                |
+|                                |      |                      | P_m        | 曾祖母(母側)           | 向上 → 曾祖母                |
+|                                |      |                      | S          | maternal_grandmother   | 水平 → 配偶(祖母/外婆)       |
+|                                |      |                      | C_any      | mother                 | 向下 → 子女(母親)            |
+|                                |      |                      | C_any      | maternal_uncle_aunt    | 向下 → 子女(舅舅/阿姨)       |
+| **maternal_grandmother**       | F    | 祖母(母側)/外婆      | P_f        | 曾祖父(母側)           | 向上 → 曾祖父                |
+|                                |      |                      | P_m        | 曾祖母(母側)           | 向上 → 曾祖母                |
+|                                |      |                      | S          | maternal_grandfather   | 水平 → 配偶(祖父/外公)       |
+|                                |      |                      | C_any      | mother                 | 向下 → 子女(母親)            |
+|                                |      |                      | C_any      | maternal_uncle_aunt    | 向下 → 子女(舅舅/阿姨)       |
+| **paternal_uncle**             | M    | 叔伯                 | P_f        | paternal_grandfather   | 向上 → 祖父(父側)            |
+|                                |      |                      | P_m        | paternal_grandmother   | 向上 → 祖母(父側)            |
+|                                |      |                      | S          | (配偶 - 嬃嬃/伯母等)   | 水平 → 配偶                  |
+|                                |      |                      | C_any      | paternal_cousin        | 向下 → 子女(堂兄弟/姊妹)     |
+| **paternal_aunt**              | F    | 姑姑                 | P_f        | paternal_grandfather   | 向上 → 祖父(父側)            |
+|                                |      |                      | P_m        | paternal_grandmother   | 向上 → 祖母(父側)            |
+|                                |      |                      | S          | (配偶 - 姑居/姑夫等)   | 水平 → 配偶                  |
+|                                |      |                      | C_any      | maternal_cousin        | 向下 → 子女(**表兄弟/姊妹**) |
+| **sibling**                    | any  | 兄弟 / 姊妹          | P_f        | father                 | 向上 → 父親(共同父親)        |
+|                                |      |                      | P_m        | mother                 | 向上 → 母親(共同母親)        |
+|                                |      |                      | S          | sibling_spouse         | 水平 → 配偶(兄嫂/弟妹等)     |
+|                                |      |                      | C_any      | nephew_niece           | 向下 → 子女(姪子/姪女)       |
+| **paternal_cousin**            | any  | 堂兄弟 / 堂姊妹      | P_f        | paternal_uncle         | 向上 → 父親(叔伯必為男性)    |
+|                                |      |                      | S          | (配偶 - 堂嫂/堂妹夫等) | 水平 → 配偶                  |
+|                                |      |                      | C_any      | (堂侄/堂姪)            | 向下 → 子女                  |
+| **maternal_uncle_aunt**        | any  | 舅舅 / 阿姨          | P_f        | maternal_grandfather   | 向上 → 祖父(母側)            |
+|                                |      |                      | P_m        | maternal_grandmother   | 向上 → 祖母(母側)            |
+|                                |      |                      | S          | (配偶 - 舅媽/阿姨夫等) | 水平 → 配偶                  |
+|                                |      |                      | C_any      | maternal_cousin        | 向下 → 子女(表兄弟/姊妹)     |
+| **maternal_cousin**            | any  | 表兄弟 / 表姊妹      | P_any      | maternal_uncle_aunt    | 向上 → 父親(舅舅/阿姨)       |
+|                                |      |                      | S          | (配偶 - 表嫂/表妹夫等) | 水平 → 配偶                  |
+|                                |      |                      | C_any      | (表侄/表姪)            | 向下 → 子女                  |
+| **paternal_grandparents_unit** | any  | 祖父母(父側)聯合單位 | P_any      | 曾祖父母(父側)         | 向上 → 曾祖父母              |
+|                                |      |                      | C_any      | father                 | 向下 → 子女(父親)            |
+|                                |      |                      | C_m        | paternal_uncle         | 向下 → 兒子(叔伯)            |
+|                                |      |                      | C_f        | paternal_aunt          | 向下 → 兒女(姑姑)            |
+| **maternal_grandparents_unit** | any  | 祖父母(母側)聯合單位 | P_any      | 曾祖父母(母側)         | 向上 → 曾祖父母              |
+|                                |      |                      | C_any      | mother                 | 向下 → 子女(母親)            |
+|                                |      |                      | C_any      | maternal_uncle_aunt    | 向下 → 子女(舅舅/阿姨)       |
 
 ### 路徑邏輯表（按親等分類至五等親）
 
@@ -351,8 +358,10 @@
 |            | maternal_grandmother | 祖母(母側)            | [P_m, P_m]                      | self → P_m → mother → P_m → maternal_grandmother                                      |
 |            | 兄弟/姊妹            | 兄弟/姊妹             | [P_f, C_any (other)]            | self → P_f → father → C_any → 兄弟/姊妹 (父親的其他子女)                              |
 | **三等親** |
-|            | paternal_uncle_aunt  | 叔伯/姑姑             | [P_f, P_f, C_any]               | self → P_f → father → P_f → paternal_grandfather → C_any → paternal_uncle_aunt        |
-|            | paternal_cousin      | 堂兄弟/姊妹           | [P_f, P_f, C_any, C_any]        | ... → paternal_grandfather → C_any → paternal_uncle_aunt → C_any → paternal_cousin    |
+|            | paternal_uncle       | 叔伯                  | [P_f, P_f, C_m]                 | self → P_f → father → P_f → paternal_grandfather → C_m → paternal_uncle               |
+|            | paternal_aunt        | 姑姑                  | [P_f, P_f, C_f]                 | self → P_f → father → P_f → paternal_grandfather → C_f → paternal_aunt                |
+|            | paternal_cousin      | 堂兄弟/姊妹           | [P_f, P_f, C_m, C_any]          | ... → paternal_grandfather → C_m → paternal_uncle → C_any → paternal_cousin           |
+|            | (姑姑的子女)         | 表兄弟/姊妹           | [P_f, P_f, C_f, C_any]          | ... → paternal_grandfather → C_f → paternal_aunt → C_any → maternal_cousin            |
 |            | maternal_uncle_aunt  | 舅舅/阿姨             | [P_m, P_f, C_any]               | self → P_m → mother → P_f → maternal_grandfather → C_any → maternal_uncle_aunt        |
 |            | maternal_cousin      | 表兄弟/姊妹           | [P_m, P_f, C_any, C_any]        | ... → maternal_grandfather → C_any → maternal_uncle_aunt → C_any → maternal_cousin    |
 |            | 侄子/姪女            | 侄子/姪女             | [C_m, C_any] / [C_f, C_any]     | self → C_m → son → C_any → 孫子/孫女 (或 self → C_f → daughter → C_any → 孫子/孫女)   |
