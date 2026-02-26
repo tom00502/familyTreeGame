@@ -1,12 +1,14 @@
 import type { Peer } from "crossws";
 import { gameState } from "../utils/gameState";
-import type { Room, Player, FamilyNode, RelationshipRecord, Spectator, AnswerRecord } from "../utils/gameState";
+import type { Room, Player, FamilyNode, RelationshipRecord, Spectator, AnswerRecord, Phase2Task, TaskPriority } from "../utils/gameState";
 import {
   handleOwnerDisconnection,
   validatePlayerInfo,
   checkAllPlayersReady,
 } from "../utils/roomManager";
 import { titleToPath, buildSkeletonMvft } from "../utils/mvftBuilder";
+import { instantiateVirtualNodes, generatePhase2Tasks, initializeEFUTrackers, selectNextTaskToDispatch, selectNextTaskForPlayer } from "../utils/phase2TaskGenerator";
+import { checkEFUCompletion } from "../utils/phase2EFUChecker";
 
 interface GamePeer extends Peer {
   playerId?: string;
@@ -25,7 +27,23 @@ export default defineWebSocketHandler({
   },
 
   message(peer, message) {
-    try {
+    handleMessage(peer, message).catch(err => {
+      console.error('[WS] 处理消息错误:', err);
+    });
+  },
+
+  close(peer) {
+    console.log(`[WS] 連線關閉: ${peer.id}`);
+    connections.delete(peer.id);
+  },
+});
+
+// ════════════════════════════════════════════════════════════════════
+// 異步消息處理函數
+// ════════════════════════════════════════════════════════════════════
+
+async function handleMessage(peer: any, message: any) {
+  try {
       const data = JSON.parse(message.text());
       const gamePeer = peer as GamePeer;
 
@@ -38,11 +56,13 @@ export default defineWebSocketHandler({
           status: "waiting",
           gameTime: data.gameTime,
           players: new Map(),
-          familyTree: { nodes: new Map(), rootNodes: [] },
+          familyTree: { nodes: new Map(), rootNodes: [], virtualNodes: new Map() },
           relationships: [],
           mvft: null,
           taskQueue: [],
+          dispatchedTasks: new Map(),
           completedTasks: [],
+          phase2State: undefined,
           controllerId: peer.id,
           originalOwnerId: undefined,
           isLocked: false,
@@ -401,8 +421,8 @@ export default defineWebSocketHandler({
         }
         
         // 發送下一題
-        setTimeout(() => {
-          sendNextQuestion(room, player);
+        setTimeout(async () => {
+          await sendNextQuestion(room, player);
         }, 500); // 給前端一點時間處理
       }
       
@@ -460,9 +480,227 @@ export default defineWebSocketHandler({
         }
         
         // 發送下一題
-        setTimeout(() => {
-          sendNextQuestion(room, player);
+        setTimeout(async () => {
+          await sendNextQuestion(room, player);
         }, 500); // 給前端一點時間處理
+      }
+
+      // ──────────────────────────────────────────────
+      // Phase 2: 資料填充事件處理
+      // ──────────────────────────────────────────────
+
+      if (data.type === "data_filling:answer") {
+        const { taskId, answer } = data;
+        const { roomId, playerId } = gamePeer;
+        
+        if (!roomId || !playerId) return;
+        
+        const room = gameState.rooms.get(roomId);
+        if (!room || room.status !== "data-filling") return;
+        
+        const task = room.dispatchedTasks.get(taskId);
+        if (!task || task.assignedPlayerId !== playerId) {
+          console.error(`[Phase 2] 任務 ID 或所有者不匹配: ${taskId}`);
+          return;
+        }
+        
+        const player = room.players.get(playerId);
+        if (!player) return;
+        
+        console.log(`[Phase 2] 玩家 ${player.name} 完成任務 ${taskId}`);
+        
+        // 1. 更新虛擬節點信息
+        const targetNodeId = (task as any).targetNodeId;
+        if (targetNodeId) {
+          const vnode = room.familyTree.virtualNodes?.get(targetNodeId);
+          if (vnode) {
+            if (task.type === "node-naming" && typeof answer === "string") {
+              vnode.name = answer;
+            } else if (task.type === "attribute-filling" && "attributeType" in task) {
+              if (task.attributeType === "gender" && (answer === "male" || answer === "female")) {
+                vnode.gender = answer;
+                vnode.efuStatus.upward = true; // 確認性別即視為向上完整
+              } else if (task.attributeType === "birthday") {
+                vnode.birthday = new Date(answer as string);
+              }
+            } else if (task.type === "upward-tracing" && "parentType" in task) {
+              if ((task as any).parentType === "father") {
+                vnode.fatherId = answer as string;
+              } else if ((task as any).parentType === "mother") {
+                vnode.motherId = answer as string;
+              }
+              vnode.efuStatus.upward = true;
+            }
+            vnode.updatedAt = Date.now();
+          }
+        }
+        
+        // 2. 標記任務完成
+        task.answer = answer;
+        task.completedAt = Date.now();
+        room.completedTasks.push(task);
+        room.dispatchedTasks.delete(taskId);
+        
+        // 3. 更新玩家分數
+        const playerState = room.phase2State?.playerStates.get(playerId);
+        if (playerState) {
+          playerState.completedTasks.push(taskId);
+          playerState.contributionScore = playerState.completedTasks.length / room.taskQueue.length;
+        }
+        
+        // 4. 推送紀錄給旁觀者
+        const answerRecord: AnswerRecord = {
+          timestamp: Date.now(),
+          playerName: player.name,
+          playerId,
+          summary: `完成任務 ${taskId}`,
+          status: "confirmed",
+        };
+        room.answerHistory.unshift(answerRecord);
+        if (room.answerHistory.length > 50) room.answerHistory.pop();
+        broadcastToSpectators(roomId, { type: "spectator:answer_submitted", ...answerRecord });
+        
+        // 5. 檢查 EFU 完成度
+        const isEFUComplete = checkEFUCompletion(room);
+        
+        // 找到發題者的連線
+        const peer = Array.from(connections.values()).find(
+          p => (p as GamePeer).playerId === playerId
+        );
+        
+        if (isEFUComplete) {
+          console.log(`[Phase 2] 所有關鍵節點 EFU 已完成，進入驗證階段`);
+          room.status = "verification";
+          
+          // 顯示完整 MVFT
+          broadcastToRoom(room.roomId, "", {
+            type: "stage_completed",
+            stage: "data-filling",
+            nextStage: "verification",
+            mvft: room.mvft,  // 現在才展示 MVFT
+          });
+          
+          broadcastToSpectators(roomId, {
+            type: "spectator:efu_complete",
+            mvft: room.mvft,
+          });
+          
+          // 通知發題者任務確認（EFU 完成）
+          if (peer) {
+            peer.send(JSON.stringify({
+              type: "data_filling:task_confirmed",
+              taskId,
+              answer,
+              efu_complete: true,
+              nextTask: null,
+            }));
+          }
+        } else {
+          // 6. 派發下一個任務給完成任務的玩家
+          const nextTaskForPlayer = selectNextTaskForPlayer(room, room.taskQueue, playerId);
+          
+          if (nextTaskForPlayer) {
+            room.taskQueue = room.taskQueue.filter(t => t.taskId !== nextTaskForPlayer.taskId);
+            room.dispatchedTasks.set(nextTaskForPlayer.taskId, nextTaskForPlayer);
+            
+            console.log(`[Phase 2] 為玩家 ${player.name} 派發新任務 ${nextTaskForPlayer.taskId}`);
+            
+            // 通知旁觀者
+            broadcastToSpectators(roomId, {
+              type: "spectator:task_dispatched",
+              taskId: nextTaskForPlayer.taskId,
+              assignedPlayerId: nextTaskForPlayer.assignedPlayerId,
+            });
+          } else {
+            console.log(`[Phase 2] 沒有更多任務可派發給玩家 ${player.name}`);
+          }
+          
+          // 7. 通知發題者（包含下一個任務）
+          if (peer) {
+            peer.send(JSON.stringify({
+              type: "data_filling:task_confirmed",
+              taskId,
+              answer,
+              efu_complete: false,
+              nextTask: nextTaskForPlayer ?? null,  // 包含下一個任務
+            }));
+          }
+        }
+      }
+      
+      // 跳過任務
+      if (data.type === "data_filling:skip") {
+        const { taskId } = data;
+        const { roomId, playerId } = gamePeer;
+        
+        if (!roomId || !playerId) return;
+        
+        const room = gameState.rooms.get(roomId);
+        if (!room || room.status !== "data-filling") return;
+        
+        const task = room.dispatchedTasks.get(taskId);
+        if (!task || task.assignedPlayerId !== playerId) {
+          console.error(`[Phase 2] 無法跳過任務: ${taskId}`);
+          return;
+        }
+        
+        const player = room.players.get(playerId);
+        if (!player) return;
+        
+        console.log(`[Phase 2] 玩家 ${player.name} 跳過任務 ${taskId}`);
+        
+        // 1. 增加跳過計數並降低優先級
+        const playerState = room.phase2State?.playerStates.get(playerId);
+        if (playerState) {
+          const skipCount = (playerState.skippedTasks.get(taskId) || 0) + 1;
+          playerState.skippedTasks.set(taskId, skipCount);
+          
+          // 跳過太多次的任務降低優先級
+          if (skipCount > 2) {
+            const priorityLevels: TaskPriority[] = ["L1", "L2", "L3", "L4", "L5", "L6"];
+            const currentIndex = priorityLevels.indexOf(task.priority);
+            if (currentIndex < 5) {
+              task.priority = priorityLevels[currentIndex + 1];
+            }
+          }
+        }
+        
+        // 2. 從已派發移除，重新加入待派發隊列
+        room.dispatchedTasks.delete(taskId);
+        room.taskQueue.push(task);
+        task.assignedPlayerId = undefined;
+        task.isLocked = false;
+        
+        // 3. 派發其他任務給此玩家
+        const nextTask = selectNextTaskForPlayer(room, room.taskQueue, playerId);
+        
+        if (nextTask) {
+          room.taskQueue = room.taskQueue.filter(t => t.taskId !== nextTask.taskId);
+          room.dispatchedTasks.set(nextTask.taskId, nextTask);
+          
+          console.log(`[Phase 2] 為跳過的玩家 ${player.name} 派發新任務 ${nextTask.taskId}`);
+        } else {
+          console.log(`[Phase 2] 沒有更多任務可派發給跳過的玩家 ${player.name}`);
+        }
+        
+        // 發送確認給玩家（包含下一個任務）
+        broadcastToPlayer(room.roomId, player.socketId, {
+          type: "data_filling:task_skipped",
+          taskId,
+          nextTask: nextTask ?? null,
+        });
+        
+        // 4. 推送紀錄給旁觀者
+        const skipRecord: AnswerRecord = {
+          timestamp: Date.now(),
+          playerName: player.name,
+          playerId,
+          summary: `跳過任務 ${taskId}`,
+          status: "skipped",
+        };
+        room.answerHistory.unshift(skipRecord);
+        if (room.answerHistory.length > 50) room.answerHistory.pop();
+        broadcastToSpectators(roomId, { type: "spectator:answer_submitted", ...skipRecord });
       }
 
       // 重連請求
@@ -523,66 +761,11 @@ export default defineWebSocketHandler({
         })
       );
     }
-  },
+}
 
-  close(peer) {
-    console.log(`[WS] 連線關閉: ${peer.id}`);
-    const gamePeer = peer as GamePeer;
-
-    if (gamePeer.roomId && gamePeer.playerId) {
-      const room = gameState.rooms.get(gamePeer.roomId);
-      if (room) {
-        // 旁觀者離線 → 從 spectators map 移除
-        if (gamePeer.isSpectatorPeer) {
-          room.spectators.delete(gamePeer.playerId);
-          console.log(`[Room] 旁觀者離線: ${gamePeer.playerName}`);
-          connections.delete(peer.id);
-          return;
-        }
-
-        const player = room.players.get(gamePeer.playerId);
-        if (player) {
-          player.isOffline = true;
-
-          // 如果是房主離線
-          if (gamePeer.isOwner && room.status === "waiting") {
-            const ownerChange = handleOwnerDisconnection(room, gamePeer.playerId);
-            
-            if (ownerChange) {
-              broadcastToRoom(gamePeer.roomId, "", {
-                type: "owner_changed",
-                newOwnerId: ownerChange.newOwnerId,
-                newOwnerName: ownerChange.newOwnerName,
-              });
-            }
-          }
-
-          // 通知其他玩家
-          broadcastToRoom(gamePeer.roomId, "", {
-            type: "player_offline",
-            playerId: player.playerId,
-            name: player.name,
-          });
-
-          // 通知旁觀者：玩家離線
-          broadcastToSpectators(gamePeer.roomId, {
-            ...buildSpectatorPlayerStatus(player, player.answeredQuestions || 0),
-            isOffline: true,
-          });
-
-          syncRoomState(room);
-          console.log(`[Room] 玩家離線: ${player.name}`);
-        }
-      }
-    }
-
-    connections.delete(peer.id);
-  },
-
-  error(peer, error) {
-    console.error(`[WS] 錯誤 (${peer.id}):`, error);
-  },
-});
+// ════════════════════════════════════════════════════════════════════
+// 輔助工具函式
+// ════════════════════════════════════════════════════════════════════
 
 // ── 旁觀者相關工具函式 ────────────────────────────────────────────
 
@@ -655,6 +838,15 @@ function broadcastToRoom(roomId: string, excludeSocketId: string, message: any) 
       }
     }
   });
+}
+
+// 發送訊息給特定玩家
+function broadcastToPlayer(roomId: string, socketId: string, message: any) {
+  const peerConnection = connections.get(socketId);
+  if (peerConnection) {
+    const messageStr = JSON.stringify(message);
+    peerConnection.send(messageStr);
+  }
 }
 
 // 同步房間狀態
@@ -750,7 +942,7 @@ function generateAndSendQuestions(room: Room) {
     }
     
     // 發送第一題
-    sendNextQuestion(room, player);
+    sendNextQuestion(room, player).catch((err) => console.error(`[Question] 發送第一題失敗: ${err}`));
   }
   
   console.log(`[Question] 已為 ${players.length} 位玩家生成問題隊列`);
@@ -763,7 +955,7 @@ function selectRandomPlayers(players: Player[], count: number): Player[] {
 }
 
 // 發送下一題給玩家
-function sendNextQuestion(room: Room, player: Player) {
+async function sendNextQuestion(room: Room, player: Player) {
   if (!player.questionQueue || player.currentQuestionIndex === undefined) {
     console.error(`[Question] 玩家 ${player.name} 沒有問題隊列`);
     return;
@@ -777,7 +969,7 @@ function sendNextQuestion(room: Room, player: Player) {
     broadcastToSpectators(room.roomId, buildSpectatorPlayerStatus(player, player.answeredQuestions || 0));
 
     // 檢查是否所有玩家都完成了
-    checkAllQuestionsCompleted(room);
+    await checkAllQuestionsCompleted(room);
     return;
   }
   
@@ -806,7 +998,7 @@ function sendNextQuestion(room: Room, player: Player) {
 }
 
 // 檢查是否所有玩家都完成問題
-function checkAllQuestionsCompleted(room: Room) {
+async function checkAllQuestionsCompleted(room: Room) {
   const activePlayers = Array.from(room.players.values()).filter(p => !p.isOffline && !p.isObserver);
   
   const allCompleted = activePlayers.every(player => {
@@ -818,7 +1010,7 @@ function checkAllQuestionsCompleted(room: Room) {
     console.log(`[Question] 所有玩家已完成關係掃描階段`);
     console.log(`[MVFT] 共收集 ${room.relationships.length} 筆關係紀錄，開始生成骨架 MVFT...`);
     
-    // ── 生成骨架 MVFT ───────────────────────────────────────────
+    // ── 生成骨架 MVFT（內部使用）───────────────────────────────────────────
     const playerInfoList = Array.from(room.players.values()
     ).filter(p => !p.isObserver).map(p => ({
       playerId: p.playerId,
@@ -828,24 +1020,120 @@ function checkAllQuestionsCompleted(room: Room) {
     }));
     
     const mvft = buildSkeletonMvft(room.relationships, playerInfoList);
-    room.mvft = mvft;
+    room.mvft = mvft;  // 儲存但暫不顯示
     
-    console.log(`[MVFT] 生成完成：${mvft.nodes.length} 個節點，${mvft.edges.length} 條邊`);
+    console.log(`[MVFT] 骨架生成完成：${mvft.nodes.length} 個節點，${mvft.edges.length} 條邊`);
     
-    // 進入下一階段
-    room.status = "in-game";
-    
-    broadcastToRoom(room.roomId, "", {
-      type: "stage_completed",
-      stage: "relationship-scan",
-      nextStage: "in-game",
-      mvft,  // 附帶 MVFT 資料
-    });
-
-    // 通知旁觀者：族譜醫架就緒
-    broadcastToSpectators(room.roomId, {
-      type: 'spectator:tree_updated',
-      mvft,
-    });
+    // ── Phase 2：虛擬節點實例化 & 任務生成 ───────────────────────────────
+    try {
+      const { instantiateVirtualNodes, generatePhase2Tasks, initializeEFUTrackers, selectNextTaskToDispatch } = await import("../utils/phase2TaskGenerator");
+      
+      // 1. 實例化虛擬節點
+      const virtualNodes = instantiateVirtualNodes(room.relationships, room.players);
+      if (!room.familyTree.virtualNodes) {
+        room.familyTree.virtualNodes = new Map();
+      }
+      for (const [nodeId, vnode] of virtualNodes) {
+        room.familyTree.virtualNodes.set(nodeId, vnode);
+      }
+      console.log(`[Phase 2] 實例化虛擬節點: ${virtualNodes.size} 個`);
+      
+      // 2. 生成任務隊列
+      const allTasks = generatePhase2Tasks(room, virtualNodes);
+      room.taskQueue = allTasks;
+      room.dispatchedTasks = new Map();
+      console.log(`[Phase 2] 生成任務隊列: ${allTasks.length} 個任務`);
+      
+      // 3. 初始化 EFU 追踪
+      if (!room.phase2State) {
+        room.phase2State = {
+          efuTrackers: initializeEFUTrackers(virtualNodes),
+          playerStates: new Map(),
+          taskDispatchIndex: 0,
+          lastDispatchTime: Date.now(),
+        };
+      }
+      
+      // 4. 初始化玩家 Phase 2 狀態
+      for (const [playerId] of room.players) {
+        if (!room.phase2State.playerStates.has(playerId)) {
+          room.phase2State.playerStates.set(playerId, {
+            playerId,
+            completedTasks: [],
+            skippedTasks: new Map(),
+            contributionScore: 0,
+          });
+        }
+      }
+      
+      // 5. 進入資料填充階段
+      room.status = "data-filling";
+      console.log(`[Phase 2] 進入資料填充階段`);
+      
+      // 6. 派發第一批任務（每位玩家都派發一個初始任務）
+      const tasksToDispatch: Phase2Task[] = [];
+      const dispatchedPlayerIds = new Set<string>();
+      
+      // 每位玩家都要有一個初始任務
+      for (const [playerId] of room.players) {
+        if (room.taskQueue.length === 0) break;
+        
+        // 為這位玩家選擇最適合的任務
+        const nextTask = selectNextTaskToDispatch(room, room.taskQueue);
+        if (nextTask) {
+          nextTask.assignedPlayerId = playerId; // 確保分配給當前玩家
+          nextTask.isLocked = true;
+          // 從隊列移除，加入已派發
+          room.taskQueue = room.taskQueue.filter(t => t.taskId !== nextTask.taskId);
+          room.dispatchedTasks.set(nextTask.taskId, nextTask);
+          tasksToDispatch.push(nextTask);
+          dispatchedPlayerIds.add(playerId);
+        }
+      }
+      
+      console.log(`[Phase 2] 派發了 ${tasksToDispatch.length} 個初始任務給 ${dispatchedPlayerIds.size} 位玩家`);
+      
+      // 7. 廣播進入 Phase 2
+      broadcastToRoom(room.roomId, "", {
+        type: "stage_completed",
+        stage: "relationship-scan",
+        nextStage: "data-filling",
+        // 不附帶 MVFT，延遲到 Phase 2 完成時
+      });
+      
+      // 8. 向各玩家派發任務
+      for (const task of tasksToDispatch) {
+        const assignedPlayer = room.players.get(task.assignedPlayerId!);
+        if (assignedPlayer) {
+          console.log(`[Phase 2] 向玩家 ${assignedPlayer.name} (socket: ${assignedPlayer.socketId}) 派發任務 ${task.taskId}`);
+          // 透過 WebSocket 發送給對應玩家
+          broadcastToPlayer(room.roomId, assignedPlayer.socketId, {
+            type: "data_filling:task_assigned",
+            task,
+          });
+        } else {
+          console.log(`[Phase 2] 警告: 找不到玩家 ${task.assignedPlayerId}`);
+        }
+      }
+      
+      // 通知旁觀者：Phase 2 開始
+      broadcastToSpectators(room.roomId, {
+        type: 'spectator:phase_changed',
+        phase: 'data-filling',
+        virtualNodesCount: virtualNodes.size,
+        taskQueueSize: room.taskQueue.length,
+      });
+      
+    } catch (error) {
+      console.error(`[Phase 2] 錯誤: ${error}`);
+      // Fallback: 顯示骨架 MVFT（容錯機制）
+      room.status = "in-game";
+      broadcastToRoom(room.roomId, "", {
+        type: "stage_completed",
+        stage: "relationship-scan",
+        nextStage: "in-game",
+        mvft,
+      });
+    }
   }
 }

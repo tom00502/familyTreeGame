@@ -25,11 +25,30 @@
     </div>
   </div>
 
-  <!-- 第一階段完成：骨架族譜預覽（MVFT 驗證模式） -->
-  <MvftPreview v-else-if="gamePhase === 'in-game' && mvftData" :mvft="mvftData" />
+  <!-- 第二階段：資料填充 -->
+  <DataFillingQuestion v-else-if="gamePhase === 'data-filling' && currentTask" :current-task="currentTask"
+    :time-limit="gameTimeRemaining" :efu-progress="efuProgress" :skipped-count="currentTaskSkipCount"
+    @answer-submitted="handleTaskAnswer" @task-skipped="handleTaskSkipped" @time-expired="handleGameTimeout" />
 
-  <!-- in-game 尚未收到 MVFT 時的等待狀態 -->
-  <div v-else-if="gamePhase === 'in-game' && !mvftData"
+  <!-- 等待其他玩家填充資料 -->
+  <div v-else-if="gamePhase === 'data-filling' && !currentTask"
+    class="min-h-screen bg-[#FAF8F3] flex items-center justify-center p-6">
+    <div class="text-center space-y-4">
+      <div
+        class="w-16 h-16 mx-auto bg-[#D4AF37] rounded-full flex items-center justify-center border-4 border-[#8B2635] shadow-lg">
+        <div class="text-2xl">📝</div>
+      </div>
+      <h2 class="text-xl font-bold text-[#5C2E2E]">等待其他家人回答問題...</h2>
+      <p class="text-[#8B8278]">請稍候片刻</p>
+      <div class="w-8 h-8 border-4 border-[#8B2635] border-t-transparent rounded-full animate-spin mx-auto"></div>
+    </div>
+  </div>
+
+  <!-- 第一階段完成：骨架族譜預覽（MVFT 驗證模式） -->
+  <MvftPreview v-else-if="gamePhase === 'verification' && mvftData" :mvft="mvftData" />
+
+  <!-- verification 或 in-game 尚未收到 MVFT 時的等待狀態 -->
+  <div v-else-if="(gamePhase === 'verification' || gamePhase === 'in-game') && !mvftData"
     class="min-h-screen bg-[#FAF8F3] flex items-center justify-center p-6">
     <div class="text-center space-y-4">
       <div
@@ -37,7 +56,7 @@
         <div class="text-2xl">🌳</div>
       </div>
       <h2 class="text-xl font-bold text-[#5C2E2E]">族譜結構生成中…</h2>
-      <p class="text-[#8B8278]">正在組裝骨架族譜，請稍候筇候</p>
+      <p class="text-[#8B8278]">正在組裝完整族譜，請稍候</p>
       <div class="w-8 h-8 border-4 border-[#8B2635] border-t-transparent rounded-full animate-spin mx-auto"></div>
     </div>
   </div>
@@ -65,6 +84,7 @@ import { useGameWebSocket } from '~/composables/useGameWebSocket'
 import PlayerInfoForm from '~/components/PlayerInfoForm.vue'
 import GameLobby from '~/components/GameLobby.vue'
 import RelationshipQuestion from '~/components/RelationshipQuestion.vue'
+import DataFillingQuestion from '~/components/DataFillingQuestion.vue'
 import MvftPreview from '~/components/MvftPreview.vue'
 
 const route = useRoute()
@@ -91,6 +111,10 @@ const {
   startGame,
   answerRelationship,
   skipQuestion,
+  // Phase 2
+  currentTask,
+  answerTask,
+  skipTask,
 } = useGameWebSocket()
 
 console.log('[Room] useGameWebSocket 已初始化')
@@ -100,6 +124,11 @@ const error = ref<string | null>(null)
 const isLoading = ref(true)
 const loadingMessage = ref('連線中...')
 const lobbyRef = ref<InstanceType<typeof GameLobby> | null>(null)
+
+// Phase 2 狀態（從 composable 取得的以外的本地狀態）
+const gameTimeRemaining = ref(180)
+const efuProgress = ref(0)
+const currentTaskSkipCount = ref(0)
 
 // 建立連線
 onMounted(async () => {
@@ -264,6 +293,36 @@ const handleQuestionTimeout = () => {
 
   console.log('問題超時')
   skipQuestion(currentQuestion.value.questionId)
+}
+
+// ────────────────────────────────────────────
+// Phase 2：資料填充事件處理
+// ────────────────────────────────────────────
+
+// 處理任務答案提交
+const handleTaskAnswer = (answer: any) => {
+  if (!currentTask.value) return
+
+  console.log('[Phase 2] 提交任務答案:', answer)
+  answerTask(currentTask.value.taskId, answer)
+}
+
+// 處理任務跳過
+const handleTaskSkipped = () => {
+  if (!currentTask.value) return
+
+  console.log('[Phase 2] 跳過任務:', currentTask.value.taskId)
+  currentTaskSkipCount.value++
+  skipTask(currentTask.value.taskId)
+}
+
+// 處理遊戲超時
+const handleGameTimeout = () => {
+  console.log('[Phase 2] 遊戲時間到')
+  // 遊戲時間到後自動提交當前任務或跳過
+  if (currentTask.value) {
+    handleTaskSkipped()
+  }
 }
 
 // 監聽 WebSocket 錯誤

@@ -88,11 +88,14 @@ export function useGameWebSocket() {
   const isOwner = ref(false)
   const error = ref<string | null>(null)
   const currentQuestion = ref<RelationshipQuestion | null>(null)
-  const gamePhase = ref<'waiting' | 'relationship-scan' | 'in-game' | 'finished'>('waiting')
+  const gamePhase = ref<'waiting' | 'relationship-scan' | 'data-filling' | 'verification' | 'in-game' | 'finished'>('waiting')
   const mvftData = ref<MvftData | null>(null)
   // 旁觀者狀態
   const isSpectator = ref(false)
   const spectatorState = ref<SpectatorState | null>(null)
+  // Phase 2 狀態
+  const currentTask = ref<any>(null)
+  const efuComplete = ref(false)
 
   // 連線到 WebSocket
   const connect = () => {
@@ -244,18 +247,24 @@ export function useGameWebSocket() {
         // 階段完成
         console.log('階段完成:', data.stage)
         if (data.stage === 'relationship-scan') {
-          // 儲存骨架 MVFT（若有）
+          // 進入 Phase 2：資料填充（不立即顯示 MVFT）
+          gamePhase.value = 'data-filling'
+          if (roomState.value) {
+            roomState.value.status = 'data-filling'
+          }
+          console.log('[Phase 2] 進入資料填充階段')
+        } else if (data.stage === 'data-filling') {
+          // 儲存完整 MVFT 後進入驗證或完成
           if (data.mvft) {
             mvftData.value = data.mvft
-            console.log('[MVFT] 收到骨架族譜:', data.mvft.nodes.length, '節點,', data.mvft.edges.length, '邊')
+            console.log('[MVFT] 收到完整族譜:', data.mvft.nodes.length, '節點,', data.mvft.edges.length, '邊')
           }
-          gamePhase.value = 'in-game'
+          gamePhase.value = data.nextStage === 'verification' ? 'verification' : 'in-game'
           if (roomState.value) {
-            roomState.value.status = 'in-game'
+            roomState.value.status = gamePhase.value
           }
+          console.log('[大揭曉] 完整族譜已產生')
         }
-        // 遊戲開始
-        console.log('遊戲已開始')
         break
 
       case 'owner_changed':
@@ -350,6 +359,42 @@ export function useGameWebSocket() {
         console.log('[WS] spectator:redirect → game not started')
         break
 
+      case 'data_filling:task_assigned':
+        // Phase 2: 收到任務派發（初始派發或來自其他來源）
+        console.log('[Phase 2] 收到任務派發:', data.task)
+        currentTask.value = data.task
+        break
+
+      case 'data_filling:task_confirmed':
+        // Phase 2: 任務確認完成，同時可能包含下一個任務
+        console.log('[Phase 2] 任務確認完成')
+        if (data.efu_complete) {
+          console.log('[Phase 2] EFU 已完成，進入驗證階段')
+          efuComplete.value = true
+          currentTask.value = null
+        } else if (data.nextTask) {
+          // 有下一個任務
+          console.log('[Phase 2] 收到下一個任務:', data.nextTask)
+          currentTask.value = data.nextTask
+        } else {
+          // 沒有更多任務，顯示等待畫面
+          console.log('[Phase 2] 沒有更多任務可執行')
+          currentTask.value = null
+        }
+        break
+
+      case 'data_filling:task_skipped':
+        // Phase 2: 任務跳過確認，同時可能包含下一個任務
+        console.log('[Phase 2] 任務跳過確認')
+        if (data.nextTask) {
+          console.log('[Phase 2] 跳過後收到下一個任務:', data.nextTask)
+          currentTask.value = data.nextTask
+        } else {
+          console.log('[Phase 2] 跳過後沒有更多任務')
+          currentTask.value = null
+        }
+        break
+
       case 'error':
         // 錯誤訊息
         error.value = data.message
@@ -406,6 +451,23 @@ export function useGameWebSocket() {
     send({
       type: 'relationship_skip',
       questionId,
+    })
+  }
+
+  // Phase 2: 回答資料填充任務
+  const answerTask = (taskId: string, answer: any) => {
+    send({
+      type: 'data_filling:answer',
+      taskId,
+      answer,
+    })
+  }
+
+  // Phase 2: 跳過資料填充任務
+  const skipTask = (taskId: string) => {
+    send({
+      type: 'data_filling:skip',
+      taskId,
     })
   }
 
@@ -485,6 +547,8 @@ export function useGameWebSocket() {
     mvftData,
     isSpectator,
     spectatorState,
+    currentTask,
+    efuComplete,
 
     // 方法
     connect,
@@ -496,6 +560,8 @@ export function useGameWebSocket() {
     watchRoom,
     answerRelationship,
     skipQuestion,
+    answerTask,
+    skipTask,
     reconnect,
     clearError,
   }

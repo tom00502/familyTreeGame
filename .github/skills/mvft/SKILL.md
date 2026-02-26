@@ -461,7 +461,9 @@ describe("MVFT Implementation", () => {
 - 系統指令：`/SYSTEM_INSTRUCTIONS.md`
 - 實作階段說明：`/STAGE1_IMPLEMENTATION.md`
 - 連線規格：`/CONNECTION_SPEC.md`
-- 問題策略規格：`/QUESTION_STRATEGY_SPEC.md`
+- 出題策略（Phase 2）：`/docs/features/qa_phase2_data_filling.md`
+- 任務管理技術細節：`/docs/technical/task-management.md`
+- WebSocket 事件：`/docs/technical/websocket-protocol.md`
 
 ---
 
