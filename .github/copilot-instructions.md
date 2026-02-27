@@ -37,17 +37,23 @@ docs/ (規格文件根目錄)
 │   ├─ qa_phase1_relationship_check.md (關係確認出題邏輯)
 │   ├─ qa_phase2_data_filling.md (資料填充策略)
 │   ├─ qa_phase3_data_check.md (計分與結果呈現)
+│   ├─ relationship_path_resolution.md (關係路徑解析、稱謂映射、BFS 遍歷)
+│   ├─ scoring_system.md (計分系統、任務基礎分、獎勵與扣分機制)
 │   └─ spectator_mode.md (旁觀者看板、答題監測、即時族譜)
 │
 ├── technical/ (技術實作層)
-│   ├─ dag_traversal.md (DAG 遍歷演算法)
-│   ├─ concurrency_lock.md (併發控制與鎖定機制)
-│   └─ conflict_resolution.md (衝突偵測與解決)
+│   ├─ answer-history.md (答題歷史紀錄、進度追蹤)
+│   ├─ data-structures.md (核心資料結構統一定義)
+│   ├─ mvft.md (MVFT 技術實作、節點擴張、關鍵路徑演算法)
+│   ├─ player-management.md (玩家生命週期、房主轉移邏輯)
+│   ├─ reconnection-handler.md (斷線重連、狀態恢復機制)
+│   ├─ room-lifecycle.md (房間生命週期、建立與銷毀流程)
+│   ├─ spectator-system.md (旁觀者系統技術實現、即時同步)
+│   ├─ task-management.md (Phase2 任務管理、派發與鎖定)
+│   └─ websocket-protocol.md (WebSocket 事件規格、訊息格式)
 │
 └── design/ (視覺規範層)
-    ├─ visual_system.md (配色、排版、圖示規範)
-    ├─ animation_specs.md (動畫效果、轉場、揭曉效果)
-    └─ spouse_merge_guide.md (配偶合併、性別顯示規範)
+    └─ family_tree.md (vue-flow + dagre 族譜繪製、MemberCard 節點)
 ```
 
 ### 按角色選擇閱讀資料夾
@@ -98,6 +104,8 @@ docs/ (規格文件根目錄)
 - [qa_phase1_relationship_check.md](../docs/features/qa_phase1_relationship_check.md) - 關係確認階段的出題邏輯、二階段追問、虛擬節點生成
 - [qa_phase2_data_filling.md](../docs/features/qa_phase2_data_filling.md) - 資料填充階段的任務派發策略、MVFT 概念、獨佔提問規則
 - [qa_phase3_data_check.md](../docs/features/qa_phase3_data_check.md) - 結算階段的資料驗證、衝突解決、計分系統、排名機制
+- [relationship_path_resolution.md](../docs/features/relationship_path_resolution.md) - 關係路徑解析、稱謂映射標準化、BFS 圖形遍歷、骨架族譜生成
+- [scoring_system.md](../docs/features/scoring_system.md) - 計分系統獨立規格、任務基礎分、獎勵加分與扣分機制
 - [spectator_mode.md](../docs/features/spectator_mode.md) - 旁觀者看板、答題監測、即時族譜、權限限制
 
 **適合讀者**：產品經理、遊戲設計師、業務分析師、前端（特別是 UX 流程部分）
@@ -107,16 +115,22 @@ docs/ (規格文件根目錄)
 **用途**：「冷冰冰的技術」，提供實作細節給工程師  
 **核心問題**：
 
-- DAG 怎麼遍歷？
-- 如何處理併發衝突？
-- 效能瓶頸在哪？
-- 如何最佳化查詢？
+- 資料結構怎麼定義？
+- MVFT 演算法怎麼實作？
+- WebSocket 協議怎麼設計？
+- 斷線重連、任務管理怎麼處理？
 
 **主要檔案**：
 
-- dag_traversal.md - 有向無環圖遞歸、BFS/DFS 策略、路徑查詢
-- concurrency_lock.md - 併發鎖實作、樂觀/悲觀鎖選擇、事務隔離
-- conflict_resolution.md - 衝突偵測演算法、優先級規則、自動合併策略
+- [answer-history.md](../docs/technical/answer-history.md) - 答題歷史紀錄生命週期、維護策略、進度計算
+- [data-structures.md](../docs/technical/data-structures.md) - Room、Player、FamilyNode 等核心資料結構統一定義
+- [mvft.md](../docs/technical/mvft.md) - MVFT 技術實作、關鍵節點接口、節點擴張演算法、EFU 檢查
+- [player-management.md](../docs/technical/player-management.md) - 玩家生命週期、狀態轉換、房主轉移邏輯
+- [reconnection-handler.md](../docs/technical/reconnection-handler.md) - WebSocket 斷線檢測、自動重連、狀態恢復
+- [room-lifecycle.md](../docs/technical/room-lifecycle.md) - 房間建立、狀態轉換、清理與銷毀流程
+- [spectator-system.md](../docs/technical/spectator-system.md) - 旁觀者資料結構、加入路徑、答題歷史維護、即時同步
+- [task-management.md](../docs/technical/task-management.md) - Phase2 任務資料結構、派發與鎖定邏輯
+- [websocket-protocol.md](../docs/technical/websocket-protocol.md) - 所有 WebSocket 事件規格、方向、資料結構、觸發條件
 
 **適合讀者**：演算法工程師、後端核心開發、資料庫優化工程師
 
@@ -125,17 +139,11 @@ docs/ (規格文件根目錄)
 **用途**：統一視覺語言，確保設計與前端的一致性  
 **核心內容**：
 
-- 配色、排版、圖示規範
-- 動畫效果與轉場邏輯
-- 配偶合併、性別顯示規範
-- 響應式設計斷點
-- 可及性檢查清單
+- 族譜繪製方案與節點元件設計
 
 **主要檔案**：
 
-- visual_system.md - 配色方案、字體、組件設計、間距規則
-- animation_specs.md - 大揭曉動畫、轉場效果、載入狀態視覺反饋
-- spouse_merge_guide.md - 配偶節點合併視覺表現、性別顯示、關係線繪製
+- [family_tree.md](../docs/design/family_tree.md) - 使用 vue-flow 搭配 dagre 進行族譜繪製、MemberCard 節點元件
 
 **適合讀者**：UI/UX 設計師、前端工程師
 

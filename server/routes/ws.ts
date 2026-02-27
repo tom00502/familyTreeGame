@@ -7,7 +7,7 @@ import {
   checkAllPlayersReady,
 } from "../utils/roomManager";
 import { titleToPath, buildSkeletonMvft } from "../utils/mvftBuilder";
-import { instantiateVirtualNodes, generatePhase2Tasks, initializeEFUTrackers, selectNextTaskToDispatch, selectNextTaskForPlayer } from "../utils/phase2TaskGenerator";
+import { instantiateVirtualNodes, generatePhase2Tasks, initializeEFUTrackers, selectNextTaskToDispatch, selectNextTaskForPlayer, updateTaskLabelsAfterNaming, isTaskStillNeeded, createDynamicSpouseNode, createDynamicChildrenNodes, detectSameNameNodes, mergeVirtualNodes } from "../utils/phase2TaskGenerator";
 import { checkEFUCompletion } from "../utils/phase2EFUChecker";
 
 interface GamePeer extends Peer {
@@ -509,19 +509,48 @@ async function handleMessage(peer: any, message: any) {
         
         console.log(`[Phase 2] 玩家 ${player.name} 完成任務 ${taskId}`);
         
-        // 1. 更新虛擬節點信息
+        // 1. 更新虛擬節點信息（規則 4：答案即時回填骨架族譜）
         const targetNodeId = (task as any).targetNodeId;
+        let updateType: string = '';
+        // 保存原始標籤，用於旁觀者摘要（命名任務會更新標籤，需先記錄）
+        const originalLabel = (task as any).targetNodeLabel || (task as any).targetNodeName || '';
         if (targetNodeId) {
           const vnode = room.familyTree.virtualNodes?.get(targetNodeId);
           if (vnode) {
             if (task.type === "node-naming" && typeof answer === "string") {
               vnode.name = answer;
+              updateType = 'name';
+              // 規則 5：姓名優先 — 命名後更新所有引用此節點的待派任務標籤
+              updateTaskLabelsAfterNaming(
+                targetNodeId,
+                answer,
+                room.taskQueue,
+                room.dispatchedTasks,
+                room.players,
+                room.familyTree.virtualNodes
+              );
+              console.log(`[Phase 2] 節點 ${targetNodeId} 命名為「${answer}」，已更新後續任務標籤`);
+              
+              // ★ 同名節點偵測：檢查是否有其他節點同名，自動產生匯聚確認任務
+              const convergenceTasks = detectSameNameNodes(
+                targetNodeId,
+                answer,
+                room.familyTree.virtualNodes!,
+                room.players
+              );
+              if (convergenceTasks.length > 0) {
+                // 匯聚任務優先插入隊列頭部
+                room.taskQueue.unshift(...convergenceTasks);
+                console.log(`[Phase 2] 偵測到 ${convergenceTasks.length} 個同名節點「${answer}」，產生匯聚確認任務`);
+              }
             } else if (task.type === "attribute-filling" && "attributeType" in task) {
               if (task.attributeType === "gender" && (answer === "male" || answer === "female")) {
                 vnode.gender = answer;
                 vnode.efuStatus.upward = true; // 確認性別即視為向上完整
+                updateType = 'gender';
               } else if (task.attributeType === "birthday") {
                 vnode.birthday = new Date(answer as string);
+                updateType = 'birthday';
               }
             } else if (task.type === "upward-tracing" && "parentType" in task) {
               if ((task as any).parentType === "father") {
@@ -530,6 +559,75 @@ async function handleMessage(peer: any, message: any) {
                 vnode.motherId = answer as string;
               }
               vnode.efuStatus.upward = true;
+              updateType = 'parent';
+            } else if (task.type === "node-convergence") {
+              // ★ 節點匯聚：玩家確認兩個同名節點是否為同一人
+              const candidateNodeId = (task as any).candidateNodeId;
+              if (answer === true || answer === 'yes') {
+                // 確認為同一人：合併節點
+                mergeVirtualNodes(targetNodeId, candidateNodeId, room.familyTree.virtualNodes!);
+                updateType = 'merge';
+                console.log(`[Phase 2] 節點匯聚：${candidateNodeId} 合併至 ${targetNodeId}`);
+                
+                // 移除所有引用被合併節點 ID 的任務
+                room.taskQueue = room.taskQueue.filter(t => {
+                  const tid = (t as any).targetNodeId;
+                  const cid = (t as any).candidateNodeId;
+                  return tid !== candidateNodeId && cid !== candidateNodeId;
+                });
+              } else {
+                // 確認不是同一人：維持兩個節點
+                updateType = 'convergence_rejected';
+                console.log(`[Phase 2] 節點匯聚拒絕：${targetNodeId} 與 ${candidateNodeId} 非同一人`);
+              }
+            } else if (task.type === "lateral-inquiry") {
+              // 配偶詢問：玩家回答是否有配偶
+              if (answer === "yes") {
+                // 動態建立配偶虛擬節點和相應任務
+                const { spouseNode, tasks: newTasks } = createDynamicSpouseNode(
+                  room, targetNodeId, room.familyTree.virtualNodes!
+                );
+                // 將新任務加入任務隊列
+                room.taskQueue.push(...newTasks);
+                vnode.efuStatus.lateral = true;
+                updateType = 'spouse_confirmed';
+                console.log(`[Phase 2] 節點 ${targetNodeId} 確認有配偶，建立配偶節點 ${spouseNode.id}`);
+              } else if (answer === "no") {
+                // 確認無配偶
+                vnode.efuStatus.lateral = true;
+                updateType = 'spouse_none';
+                console.log(`[Phase 2] 節點 ${targetNodeId} 確認無配偶`);
+              }
+              // "unknown" / 跳過的情況在 skip handler 處理
+            } else if (task.type === "downward-inquiry") {
+              // 子女詢問：玩家回答有幾個子女
+              if (typeof answer === "number" && answer > 0) {
+                // 動態建立子女虛擬節點和相應任務
+                const { childNodes, tasks: newTasks } = createDynamicChildrenNodes(
+                  room, targetNodeId, answer, room.familyTree.virtualNodes!
+                );
+                // 將新任務加入任務隊列
+                room.taskQueue.push(...newTasks);
+                vnode.efuStatus.downward = true;
+                updateType = 'children_confirmed';
+                console.log(`[Phase 2] 節點 ${targetNodeId} 確認有 ${answer} 個子女，建立 ${childNodes.length} 個子女節點`);
+              } else if (answer === "no" || answer === 0) {
+                // 確認無子女
+                vnode.efuStatus.downward = true;
+                updateType = 'children_none';
+                console.log(`[Phase 2] 節點 ${targetNodeId} 確認無子女`);
+              } else if (typeof answer === "object" && answer !== null && 'hasMore' in answer) {
+                // 有額外子女
+                const additionalCount = (answer as any).additionalCount || 0;
+                if (additionalCount > 0) {
+                  const { childNodes, tasks: newTasks } = createDynamicChildrenNodes(
+                    room, targetNodeId, additionalCount, room.familyTree.virtualNodes!
+                  );
+                  room.taskQueue.push(...newTasks);
+                }
+                vnode.efuStatus.downward = true;
+                updateType = 'children_confirmed';
+              }
             }
             vnode.updatedAt = Date.now();
           }
@@ -541,35 +639,82 @@ async function handleMessage(peer: any, message: any) {
         room.completedTasks.push(task);
         room.dispatchedTasks.delete(taskId);
         
+        // 2.5 規則 3：資訊去重 — 從任務隊列移除已不需要的任務
+        room.taskQueue = room.taskQueue.filter(t => 
+          isTaskStillNeeded(t, room.familyTree.virtualNodes ?? new Map())
+        );
+        
         // 3. 更新玩家分數
         const playerState = room.phase2State?.playerStates.get(playerId);
         if (playerState) {
           playerState.completedTasks.push(taskId);
-          playerState.contributionScore = playerState.completedTasks.length / room.taskQueue.length;
+          playerState.contributionScore = playerState.completedTasks.length / (room.taskQueue.length + room.completedTasks.length);
         }
         
-        // 4. 推送紀錄給旁觀者
+        // 4. 規則 4：重建 MVFT 並推送給旁觀者即時更新族譜
+        // 使用原始標籤（命名前的關係描述），而非已更新後的姓名
+        const answerSummaryText = task.type === 'node-naming'
+          ? `為「${originalLabel}」命名為「${answer}」`
+          : task.type === 'attribute-filling'
+            ? `填寫「${(task as any).targetNodeName}」的${(task as any).attributeType === 'gender' ? '性別' : '生日'}`
+            : task.type === 'upward-tracing'
+              ? `追溯「${(task as any).targetNodeName}」的${(task as any).parentType === 'father' ? '父親' : '母親'}`
+              : task.type === 'lateral-inquiry'
+                ? answer === 'yes' ? `確認「${originalLabel}」有配偶` : `確認「${originalLabel}」無配偶`
+                : task.type === 'downward-inquiry'
+                  ? (typeof answer === 'number' && answer > 0) ? `確認「${originalLabel}」有 ${answer} 個子女` : `確認「${originalLabel}」無子女`
+                  : `完成任務 ${taskId}`;
+
         const answerRecord: AnswerRecord = {
           timestamp: Date.now(),
           playerName: player.name,
           playerId,
-          summary: `完成任務 ${taskId}`,
+          summary: answerSummaryText,
           status: "confirmed",
         };
         room.answerHistory.unshift(answerRecord);
         if (room.answerHistory.length > 50) room.answerHistory.pop();
         broadcastToSpectators(roomId, { type: "spectator:answer_submitted", ...answerRecord });
         
+        // 4.5 重建 MVFT 顯示資料並通知旁觀者
+        try {
+          const playerInfoList = Array.from(room.players.values())
+            .filter(p => !p.isObserver)
+            .map(p => ({ playerId: p.playerId, nodeId: p.nodeId, name: p.name, gender: p.gender, birthday: p.birthday }));
+          const updatedMvft = buildSkeletonMvft(room.relationships, playerInfoList, room.familyTree.virtualNodes);
+          // virtualNodes 已在 buildSkeletonMvft 第五步處理，不需要再次更新標籤
+          room.mvft = updatedMvft;
+          broadcastToSpectators(roomId, {
+            type: "spectator:tree_updated",
+            mvft: updatedMvft,
+            updatedNodeId: targetNodeId,
+            updateType,
+          });
+          console.log(`[Phase 2] MVFT 已更新並通知旁觀者 (${updateType}: ${targetNodeId})`);
+        } catch (err) {
+          console.error(`[Phase 2] 重建 MVFT 失敗:`, err);
+        }
+        
         // 5. 檢查 EFU 完成度
         const isEFUComplete = checkEFUCompletion(room);
+        
+        // ★ 必須同時滿足：EFU 完成 + 沒有任何正在進行中的已派發任務 + 任務隊列為空
+        // 避免一位玩家答完就結束，而另一位玩家仍在答題
+        const hasInFlightTasks = room.dispatchedTasks.size > 0;
+        const hasQueuedTasks = room.taskQueue.length > 0;
+        const canEndPhase2 = isEFUComplete && !hasInFlightTasks && !hasQueuedTasks;
+        
+        if (isEFUComplete && (hasInFlightTasks || hasQueuedTasks)) {
+          console.log(`[Phase 2] EFU 條件已滿足，但仍有 ${room.dispatchedTasks.size} 個已派發任務、${room.taskQueue.length} 個待派發任務，等待全部完成`);
+        }
         
         // 找到發題者的連線
         const peer = Array.from(connections.values()).find(
           p => (p as GamePeer).playerId === playerId
         );
         
-        if (isEFUComplete) {
-          console.log(`[Phase 2] 所有關鍵節點 EFU 已完成，進入驗證階段`);
+        if (canEndPhase2) {
+          console.log(`[Phase 2] 所有關鍵節點 EFU 已完成且無待處理任務，進入驗證階段`);
           room.status = "verification";
           
           // 顯示完整 MVFT
@@ -1017,6 +1162,7 @@ async function checkAllQuestionsCompleted(room: Room) {
       nodeId: p.nodeId,
       name: p.name,
       gender: p.gender,
+      birthday: p.birthday,
     }));
     
     const mvft = buildSkeletonMvft(room.relationships, playerInfoList);

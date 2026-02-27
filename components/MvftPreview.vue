@@ -24,6 +24,10 @@
             <span class="text-[#5C2E2E]">虛擬節點（待填充）</span>
         </div>
         <div class="flex items-center gap-2">
+            <div class="w-5 h-5 rounded bg-[#6B5B4E] border-2 border-[#D4AF37]"></div>
+            <span class="text-[#5C2E2E]">已確認節點</span>
+        </div>
+        <div class="flex items-center gap-2">
             <div class="w-8 h-0.5 bg-[#5C2E2E]"></div>
             <span class="text-[#5C2E2E]">親子關係</span>
         </div>
@@ -76,6 +80,8 @@ interface MvftDisplayNode {
     isPlayer: boolean
     playerId?: string
     isVirtual: boolean
+    birthday?: string
+    isConfirmed?: boolean
 }
 
 interface MvftDisplayEdge {
@@ -118,6 +124,7 @@ const NODE_HEIGHT = 64
 /**
  * 使用 dagre（僅根據親子邊排版）計算每個節點的座標。
  * 配偶邊不納入 dagre，避免破壞層次結構。
+ * ★ 後處理：強制配偶節點同一 Y 軸高度（同層顯示）
  */
 const dagrePositions = computed((): Map<string, { x: number; y: number }> => {
     const { nodes, edges } = props.mvft
@@ -149,6 +156,27 @@ const dagrePositions = computed((): Map<string, { x: number; y: number }> => {
             map.set(n.id, { x: 20, y: 20 + map.size * (NODE_HEIGHT + 20) })
         }
     }
+
+    // ★ 後處理：配偶同層對齊
+    // 遍歷所有配偶邊，強制兩端節點 Y 座標一致（取較小值，即較高的那層）
+    for (const e of edges) {
+        if (e.type === 'spouse') {
+            const posA = map.get(e.from)
+            const posB = map.get(e.to)
+            if (posA && posB) {
+                const alignedY = Math.min(posA.y, posB.y)
+                posA.y = alignedY
+                posB.y = alignedY
+                // 確保配偶水平相鄰：如果 X 座標差距過小，稍微分開
+                if (Math.abs(posA.x - posB.x) < NODE_WIDTH + 20) {
+                    const midX = (posA.x + posB.x) / 2
+                    posA.x = midX - NODE_WIDTH / 2 - 15
+                    posB.x = midX + NODE_WIDTH / 2 + 15
+                }
+            }
+        }
+    }
+
     return map
 })
 
@@ -163,7 +191,9 @@ const flowNodes = computed(() =>
             avatar: genderEmoji(n),
             isVirtual: n.isVirtual,
             isPlayer: n.isPlayer,
+            isConfirmed: n.isConfirmed ?? n.isPlayer,
             gender: n.gender,
+            birthday: n.birthday,
         },
     }))
 )

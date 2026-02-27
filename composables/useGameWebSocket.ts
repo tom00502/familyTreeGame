@@ -26,6 +26,8 @@ export interface MvftDisplayNode {
   isPlayer: boolean
   playerId?: string
   isVirtual: boolean
+  birthday?: string       // ISO date string (YYYY-MM-DD)
+  isConfirmed?: boolean   // 虛擬節點資料已確認（有名字）
 }
 
 export interface MvftDisplayEdge {
@@ -348,7 +350,44 @@ export function useGameWebSocket() {
 
       case 'spectator:tree_updated':
         if (spectatorState.value) {
-          spectatorState.value.mvft = data.mvft
+          // 完整替換 mvft 資料，觸發 Vue 響應式更新
+          spectatorState.value = {
+            ...spectatorState.value,
+            mvft: data.mvft,
+          }
+          console.log('[WS] 族譜已更新，節點數:', data.mvft?.nodes?.length ?? 0)
+        }
+        break
+
+      case 'spectator:efu_complete':
+        // EFU 完成，族譜資料可能一起發送
+        if (spectatorState.value) {
+          if (data.mvft) {
+            spectatorState.value = {
+              ...spectatorState.value,
+              mvft: data.mvft,
+              roomStatus: 'verification',
+            }
+          } else {
+            spectatorState.value.roomStatus = 'verification'
+          }
+        }
+        break
+
+      case 'spectator:task_dispatched':
+        // 任務派發通知（資訊性，更新旁觀者玩家狀態）
+        if (spectatorState.value && data.assignedPlayerId) {
+          const idx = spectatorState.value.players.findIndex(p => p.playerId === data.assignedPlayerId)
+          if (idx >= 0) {
+            spectatorState.value.players[idx].currentQuestionSummary = `正在回答任務...`
+          }
+        }
+        break
+
+      case 'spectator:phase_changed':
+        // 遊戲階段變更
+        if (spectatorState.value) {
+          spectatorState.value.roomStatus = data.phase
         }
         break
 

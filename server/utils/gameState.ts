@@ -4,7 +4,7 @@ export type Gender = "male" | "female" | "unknown";
 export type RoomStatus = "idle" | "waiting" | "relationship-scan" | "data-filling" | "verification" | "finished";
 
 // Phase 2 任務類型
-export type TaskType = "node-naming" | "attribute-filling" | "upward-tracing" | "node-convergence" | "age-ordering";
+export type TaskType = "node-naming" | "attribute-filling" | "upward-tracing" | "node-convergence" | "age-ordering" | "lateral-inquiry" | "downward-inquiry";
 export type TaskPriority = "L1" | "L2" | "L3" | "L4" | "L5" | "L6";
 export type EfuDimension = "upward" | "lateral" | "downward" | "optional";
 
@@ -122,8 +122,40 @@ export interface AgeOrderingTask {
   completedAt?: number;
 }
 
+// 配偶詢問任務（向側 EFU）
+export interface LateralInquiryTask {
+  type: "lateral-inquiry";
+  taskId: string;
+  priority: TaskPriority;
+  efuDimension: "lateral";
+  targetNodeId: string;
+  targetNodeName: string;
+  assignedPlayerId?: string;
+  isLocked: boolean;
+  createdAt: number;
+  answer?: "yes" | "no" | "unknown"; // 是否有配偶
+  completedAt?: number;
+}
+
+// 子女詢問任務（向下 EFU）
+export interface DownwardInquiryTask {
+  type: "downward-inquiry";
+  taskId: string;
+  priority: TaskPriority;
+  efuDimension: "downward";
+  targetNodeId: string;
+  targetNodeName: string;
+  knownChildrenCount: number; // 已知的子女數
+  knownChildrenNames: string[]; // 已知的子女名字
+  assignedPlayerId?: string;
+  isLocked: boolean;
+  createdAt: number;
+  answer?: { hasMore: boolean; additionalCount?: number } | "no" | number; // 子女數或無
+  completedAt?: number;
+}
+
 // 統一的任務類型
-export type Phase2Task = NodeNamingTask | AttributeFillingTask | UpwardTracingTask | NodeConvergenceTask | AgeOrderingTask;
+export type Phase2Task = NodeNamingTask | AttributeFillingTask | UpwardTracingTask | NodeConvergenceTask | AgeOrderingTask | LateralInquiryTask | DownwardInquiryTask;
 
 // ==================== Phase 2 玩家狀態擴展 ====================
 
@@ -155,6 +187,8 @@ export interface MvftDisplayNode {
   isPlayer: boolean;
   playerId?: string;
   isVirtual: boolean;
+  birthday?: string;      // ISO 日期字串 (YYYY-MM-DD)，用於計算年齡
+  isConfirmed?: boolean;   // 虛擬節點資料已確認（有名字）= true
 }
 
 // MVFT 可視化邊

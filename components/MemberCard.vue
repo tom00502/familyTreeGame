@@ -12,9 +12,12 @@
 
   <div class="avatar">{{ data.avatar || '👤' }}</div>
   <div class="info">
-    <div class="name" :class="nameClass">{{ data.label }}</div>
+    <div class="name-row">
+      <span class="name" :class="nameClass">{{ data.label }}</span>
+      <span class="age-badge" :class="ageBadgeClass">{{ ageDisplay }}</span>
+    </div>
     <div class="meta" v-if="data.relation">{{ data.relation }}</div>
-    <div v-if="data.isVirtual" class="virtual-badge">待填充</div>
+    <div v-if="data.isVirtual && !data.isConfirmed" class="virtual-badge">待填充</div>
   </div>
 </div>
 </template>
@@ -30,24 +33,47 @@ interface MemberData {
   avatar?: string
   isVirtual?: boolean
   isPlayer?: boolean
+  isConfirmed?: boolean
   gender?: 'male' | 'female' | 'unknown'
   isHighlighted?: boolean
+  birthday?: string  // ISO date string (YYYY-MM-DD)
 }
 
 const props = defineProps<NodeProps<MemberData>>()
 
 const cardClass = computed(() => {
-  if (props.data.isVirtual) return 'card-virtual'
+  // 虛擬節點但已確認資料 → 顯示與玩家節點相同的樣式
+  if (props.data.isVirtual && !props.data.isConfirmed) return 'card-virtual'
   if (props.data.gender === 'male') return 'card-male'
   if (props.data.gender === 'female') return 'card-female'
   return 'card-unknown'
 })
 
 const nameClass = computed(() => {
-  return props.data.isVirtual ? 'text-[#8B8278]' : 'text-white'
+  if (props.data.isVirtual && !props.data.isConfirmed) return 'text-[#8B8278]'
+  return 'text-white'
 })
 
 const isHighlighted = computed(() => props.data.isHighlighted ?? false)
+
+/** 根據生日計算年齡，無生日則顯示 ? */
+const ageDisplay = computed(() => {
+  if (!props.data.birthday) return '?歲'
+  const birth = new Date(props.data.birthday)
+  if (isNaN(birth.getTime())) return '?歲'
+  const today = new Date()
+  let age = today.getFullYear() - birth.getFullYear()
+  const monthDiff = today.getMonth() - birth.getMonth()
+  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birth.getDate())) {
+    age--
+  }
+  return `${age}歲`
+})
+
+const ageBadgeClass = computed(() => {
+  if (props.data.isVirtual && !props.data.isConfirmed) return 'age-badge-virtual'
+  return 'age-badge-filled'
+})
 </script>
 
 <style scoped>
@@ -134,6 +160,31 @@ const isHighlighted = computed(() => props.data.isHighlighted ?? false)
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.name-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.age-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 0 4px;
+  border-radius: 4px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.age-badge-filled {
+  background: rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.age-badge-virtual {
+  background: rgba(139, 130, 120, 0.15);
+  color: #8B8278;
 }
 
 .meta {

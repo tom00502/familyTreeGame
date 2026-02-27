@@ -28,6 +28,7 @@
   <!-- 第二階段：資料填充 -->
   <DataFillingQuestion v-else-if="gamePhase === 'data-filling' && currentTask" :current-task="currentTask"
     :time-limit="gameTimeRemaining" :efu-progress="efuProgress" :skipped-count="currentTaskSkipCount"
+    :player-name="currentPlayerName"
     @answer-submitted="handleTaskAnswer" @task-skipped="handleTaskSkipped" @time-expired="handleGameTimeout" />
 
   <!-- 等待其他玩家填充資料 -->
@@ -129,6 +130,13 @@ const lobbyRef = ref<InstanceType<typeof GameLobby> | null>(null)
 const gameTimeRemaining = ref(180)
 const efuProgress = ref(0)
 const currentTaskSkipCount = ref(0)
+
+// 當前玩家名稱
+const currentPlayerName = computed(() => {
+  if (!currentPlayer.value || !roomState.value) return ''
+  const p = roomState.value.players.find(p => p.playerId === currentPlayer.value?.playerId)
+  return p?.name ?? ''
+})
 
 // 建立連線
 onMounted(async () => {

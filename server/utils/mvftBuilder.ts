@@ -396,6 +396,7 @@ export interface PlayerInfo {
   nodeId: string;
   name: string;
   gender: "male" | "female";
+  birthday?: string | Date;
 }
 
 /**
@@ -411,7 +412,8 @@ export interface PlayerInfo {
  */
 export function buildSkeletonMvft(
   relationships: RelationshipRecord[],
-  players: PlayerInfo[]
+  players: PlayerInfo[],
+  virtualNodes?: Map<string, any>
 ): MvftData {
   const nodeMap = new Map<string, MvftDisplayNode>();
   const edges: MvftDisplayEdge[] = [];
@@ -425,6 +427,10 @@ export function buildSkeletonMvft(
       isPlayer: true,
       playerId: p.playerId,
       isVirtual: false,
+      isConfirmed: true,
+      birthday: p.birthday
+        ? (typeof p.birthday === 'string' ? p.birthday : new Date(p.birthday).toISOString().split('T')[0])
+        : undefined,
     });
   }
 
@@ -484,6 +490,156 @@ export function buildSkeletonMvft(
 
   // ── 步驟四：虛擬節點重複檢查（父母節點收斂）─────────────────
   deduplicateParentNodes(nodeMap, edges);
+
+  // ── 步驟五：合併 Phase 2 動態建立的虛擬節點（配偶/子女）──────
+  // buildSkeletonMvft 只根據 Phase 1 relationships 建構，
+  // Phase 2 新增的配偶/子女節點不在 relationships 中，需手動加入。
+  if (virtualNodes) {
+    for (const [vnodeId, vnode] of virtualNodes) {
+      // 嘗試匹配已存在的 MVFT 節點（可能有 virt_ 前綴）
+      const mvftId = nodeMap.has(vnodeId) ? vnodeId
+        : nodeMap.has(`virt_${vnodeId}`) ? `virt_${vnodeId}`
+        : null;
+
+      if (mvftId) {
+        // 節點已存在：更新標籤、性別、生日、確認狀態
+        const existing = nodeMap.get(mvftId)!;
+        if (vnode.name && vnode.name !== '') {
+          existing.label = vnode.name;
+          existing.isConfirmed = true;
+        }
+        if (vnode.gender !== 'unknown') {
+          existing.gender = vnode.gender;
+        }
+        if (vnode.birthday) {
+          existing.birthday = typeof vnode.birthday === 'string'
+            ? vnode.birthday
+            : new Date(vnode.birthday).toISOString().split('T')[0];
+        }
+      } else {
+        // 新節點（Phase 2 動態建立的配偶/子女），加入 MVFT
+        const newNode: MvftDisplayNode = {
+          id: vnodeId,
+          label: vnode.name && vnode.name !== '' ? vnode.name : '？',
+          gender: vnode.gender || 'unknown',
+          isPlayer: vnode.isPlayer || false,
+          playerId: vnode.playerId,
+          isVirtual: !vnode.isPlayer,
+          isConfirmed: !!(vnode.name && vnode.name !== ''),
+          birthday: vnode.birthday
+            ? (typeof vnode.birthday === 'string' ? vnode.birthday : new Date(vnode.birthday).toISOString().split('T')[0])
+            : undefined,
+        };
+        nodeMap.set(vnodeId, newNode);
+
+        // 建立配偶邊
+        for (const spouseId of (vnode.spouseIds || [])) {
+          const spouseMvftId = nodeMap.has(spouseId) ? spouseId
+            : nodeMap.has(`virt_${spouseId}`) ? `virt_${spouseId}`
+            : spouseId;
+          addEdgeIfNew(edges, { from: spouseMvftId, to: vnodeId, type: 'spouse', label: '配偶' });
+        }
+
+        // 建立親子邊（此節點為父/母）
+        for (const childId of (vnode.childrenIds || [])) {
+          const childMvftId = nodeMap.has(childId) ? childId
+            : nodeMap.has(`virt_${childId}`) ? `virt_${childId}`
+            : childId;
+          if (nodeMap.has(childMvftId)) {
+            addEdgeIfNew(edges, { from: vnodeId, to: childMvftId, type: 'parent', label: edgeToLabel(vnode.gender === 'female' ? 'P_m' : 'P_f') });
+          }
+        }
+
+        // 建立親子邊（此節點的父/母指向它）
+        if (vnode.fatherId) {
+          const fatherMvftId = nodeMap.has(vnode.fatherId) ? vnode.fatherId
+            : nodeMap.has(`virt_${vnode.fatherId}`) ? `virt_${vnode.fatherId}`
+            : vnode.fatherId;
+          if (nodeMap.has(fatherMvftId)) {
+            addEdgeIfNew(edges, { from: fatherMvftId, to: vnodeId, type: 'parent', label: '父' });
+          }
+        }
+        if (vnode.motherId) {
+          const motherMvftId = nodeMap.has(vnode.motherId) ? vnode.motherId
+            : nodeMap.has(`virt_${vnode.motherId}`) ? `virt_${vnode.motherId}`
+            : vnode.motherId;
+          if (nodeMap.has(motherMvftId)) {
+            addEdgeIfNew(edges, { from: motherMvftId, to: vnodeId, type: 'parent', label: '母' });
+          }
+        }
+      }
+    }
+
+    // 更新玩家節點的生日資訊
+    for (const p of players) {
+      const playerNode = nodeMap.get(p.nodeId);
+      if (playerNode) {
+        playerNode.isConfirmed = true; // 玩家節點永遠已確認
+      }
+    }
+
+    // ── 安全補丁：偵測無親子邊的孤兒節點，嘗試從 virtualNodes 補建邊 ──
+    // 收集所有 parent edge 的目標節點（有被指向為子女的節點）
+    const nodesWithParentEdge = new Set<string>();
+    for (const e of edges) {
+      if (e.type === 'parent') {
+        nodesWithParentEdge.add(e.to);
+      }
+    }
+
+    // 找出所有非根節點但缺少 parent edge 的節點
+    const playerNodeIds = new Set(players.map(p => p.nodeId));
+    for (const [nodeId, node] of nodeMap) {
+      if (nodesWithParentEdge.has(nodeId)) continue; // 已有 parent edge
+      if (node.isPlayer) continue; // 玩家節點可以是根節點
+
+      // 此虛擬節點沒有任何 parent edge — 嘗試從 virtualNodes 找到其父母
+      const vnode = virtualNodes.get(nodeId);
+      if (!vnode) continue;
+
+      // 方法 1：透過 fatherId/motherId 建邊
+      let edgeCreated = false;
+      if (vnode.fatherId) {
+        const fatherMvftId = nodeMap.has(vnode.fatherId) ? vnode.fatherId
+          : nodeMap.has(`virt_${vnode.fatherId}`) ? `virt_${vnode.fatherId}`
+          : null;
+        if (fatherMvftId && nodeMap.has(fatherMvftId)) {
+          addEdgeIfNew(edges, { from: fatherMvftId, to: nodeId, type: 'parent', label: '父' });
+          edgeCreated = true;
+        }
+      }
+      if (vnode.motherId) {
+        const motherMvftId = nodeMap.has(vnode.motherId) ? vnode.motherId
+          : nodeMap.has(`virt_${vnode.motherId}`) ? `virt_${vnode.motherId}`
+          : null;
+        if (motherMvftId && nodeMap.has(motherMvftId)) {
+          addEdgeIfNew(edges, { from: motherMvftId, to: nodeId, type: 'parent', label: '母' });
+          edgeCreated = true;
+        }
+      }
+
+      // 方法 2：反向查找 — 找到 childrenIds 包含此節點的虛擬節點
+      if (!edgeCreated) {
+        for (const [vnId, vn] of virtualNodes) {
+          if (vn.childrenIds.includes(nodeId)) {
+            const parentMvftId = nodeMap.has(vnId) ? vnId
+              : nodeMap.has(`virt_${vnId}`) ? `virt_${vnId}`
+              : null;
+            if (parentMvftId && nodeMap.has(parentMvftId)) {
+              const parentLabel = edgeToLabel(vn.gender === 'female' ? 'P_m' : 'P_f');
+              addEdgeIfNew(edges, { from: parentMvftId, to: nodeId, type: 'parent', label: parentLabel });
+              edgeCreated = true;
+              break;
+            }
+          }
+        }
+      }
+
+      if (!edgeCreated) {
+        console.warn(`[MVFT] 孤兒節點偵測：${nodeId}（${node.label}）無親子邊指向它，dagre 可能將其置於頂層。virtualNode fatherId=${vnode.fatherId}, motherId=${vnode.motherId}`);
+      }
+    }
+  }
 
   return {
     nodes: Array.from(nodeMap.values()),

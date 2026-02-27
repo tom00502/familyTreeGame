@@ -3,19 +3,31 @@
  *
  * Phase 2 EFU (Essential Family Unit) 完成度檢測
  *
- * EFU 完成標準：
- * - 所有玩家節點的父母、配偶、子女均已確認
- * - 所有關鍵路徑上的虛擬節點均已命名
- * - 性別遺漏不視為阻止完成（因性別可能未知）
+ * EFU 完成標準（三維度均需主動確認）：
+ * - 向上 (upward)：所有關鍵節點的父母已確認（或為根節點）
+ * - 向側 (lateral)：所有關鍵節點已被主動詢問「是否有配偶」
+ *   → 回答「有」則配偶已命名；回答「沒有」則標記完成
+ * - 向下 (downward)：所有關鍵節點已被主動詢問「有幾個子女」
+ *   → 回答「有N個」則N個子女已命名；回答「沒有」則標記完成
+ *
+ * ⚠️ 重要：lateral / downward 不能僅依賴被動檢查（如 spouseIds 是否為空），
+ *    必須透過「配偶詢問」/「子女詢問」任務主動確認後才能標記為 true。
+ *
+ * ⚠️ 階段結束條件：checkEFUCompletion 返回 true 僅代表 EFU 三維度已完成。
+ *    ws.ts 中的階段轉場邏輯需同時檢查：
+ *    1. EFU 完成 (checkEFUCompletion === true)
+ *    2. 任務隊列為空 (taskQueue.length === 0)
+ *    3. 所有已派發任務已回答 (dispatchedTasks.size === 0)
+ *    三者同時滿足才可結束 Phase 2，避免某位玩家仍在答題時提前結束。
  */
 
 import type { Room } from "./gameState";
 
 /**
- * 檢查 Room 中所有虛擬節點的 EFU 完成情況
+ * 檢查 Room 中所有關鍵節點（包含玩家）的 EFU 完成情況
  * 
  * @param room 房間對象
- * @returns true 若所有關鍵節點的 EFU 已完整，false 其他
+ * @returns true 若所有關鍵節點的 EFU 三維度均已完整
  */
 export function checkEFUCompletion(room: Room): boolean {
   if (!room.phase2State || !room.familyTree.virtualNodes) {
@@ -24,38 +36,57 @@ export function checkEFUCompletion(room: Room): boolean {
 
   const virtualNodes = room.familyTree.virtualNodes;
   
-  // 檢查所有關鍵節點
+  // 檢查所有關鍵節點（包含玩家節點）
   for (const [nodeId, vnode] of virtualNodes) {
     if (!vnode.isKeyNode) {
-      continue; // 跳過非關鍵節點
+      continue; // 跳過非關鍵節點（終端擴張的配偶/子女不需要 EFU）
     }
     
-    // 關鍵節點必須有名字
-    if (!vnode.name || vnode.name === "") {
+    // 1. 非玩家的關鍵節點必須有名字
+    if (!vnode.isPlayer && (!vnode.name || vnode.name === "")) {
       console.log(`[EFU] 節點 ${nodeId} 名字缺失，EFU 未完成`);
       return false;
     }
     
-    // 檢查向上完整性（父、母）
+    // 2. 向上完整性（父、母）— 非玩家節點必須確認
     if (!vnode.efuStatus.upward) {
-      // 如果是非玩家節點，必須有父或母
-      if (!vnode.isPlayer && !vnode.fatherId && !vnode.motherId) {
-        console.log(`[EFU] 節點 ${nodeId} 父母未確認，EFU 未完成`);
+      if (!vnode.isPlayer) {
+        console.log(`[EFU] 節點 ${nodeId} 向上(父母)未確認，EFU 未完成`);
         return false;
       }
     }
     
-    // 檢查向側完整性（配偶）- 若有提及配偶則必須確認
-    if (!vnode.efuStatus.lateral && vnode.spouseIds.length > 0) {
-      // 配偶已提及但未確認，則不完整
-      // 但如果配偶為空，則視為不需要配偶（單身或已確認無配偶）
+    // 3. 向側完整性（配偶）— 必須經過主動詢問
+    //    efuStatus.lateral = false 表示尚未詢問過
+    if (!vnode.efuStatus.lateral) {
+      console.log(`[EFU] 節點 ${nodeId} (${vnode.name || '未命名'}) 向側(配偶)未確認，EFU 未完成`);
+      return false;
     }
     
-    // 檢查向下完整性（子女）- 若有子女則必須確認名字
-    if (!vnode.efuStatus.downward && vnode.childrenIds.length > 0) {
+    // 4. 向下完整性（子女）— 必須經過主動詢問
+    //    efuStatus.downward = false 表示尚未詢問過
+    if (!vnode.efuStatus.downward) {
+      console.log(`[EFU] 節點 ${nodeId} (${vnode.name || '未命名'}) 向下(子女)未確認，EFU 未完成`);
+      return false;
+    }
+    
+    // 5. 若已確認有配偶，檢查配偶是否已命名
+    if (vnode.spouseIds.length > 0) {
+      for (const spouseId of vnode.spouseIds) {
+        const spouse = virtualNodes.get(spouseId);
+        if (spouse && !spouse.isPlayer && (!spouse.name || spouse.name === "")) {
+          console.log(`[EFU] 節點 ${nodeId} 的配偶 ${spouseId} 名字缺失，EFU 未完成`);
+          return false;
+        }
+      }
+    }
+    
+    // 6. 若已確認有子女，檢查所有子女是否已命名
+    if (vnode.childrenIds.length > 0) {
       for (const childId of vnode.childrenIds) {
         const child = virtualNodes.get(childId);
-        if (child && (!child.name || child.name === "")) {
+        // 只檢查非玩家的子女節點（玩家節點已有名字）
+        if (child && !child.isPlayer && (!child.name || child.name === "")) {
           console.log(`[EFU] 節點 ${nodeId} 的子女 ${childId} 名字缺失，EFU 未完成`);
           return false;
         }

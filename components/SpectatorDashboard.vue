@@ -129,7 +129,7 @@
             <!-- Vue Flow 族譜圖 -->
             <div v-if="data.mvft && data.mvft.nodes.length > 0"
                 class="flex-1 rounded-xl border border-[#8B8278]/20 bg-white shadow-inner overflow-hidden">
-                <VueFlow :nodes="flowNodes" :edges="flowEdges" :node-types="nodeTypes" fit-view-on-init :min-zoom="0.3"
+                <VueFlow :key="mvftVersion" :nodes="flowNodes" :edges="flowEdges" :node-types="nodeTypes" fit-view-on-init :min-zoom="0.3"
                     :max-zoom="2" class="family-flow">
                     <Background pattern-color="#8B8278" :gap="24" :size="1" :opacity="0.15" />
                     <Controls position="top-right" />
@@ -170,7 +170,9 @@ const props = defineProps<Props>()
 const statusLabel = computed(() => {
     switch (props.data.roomStatus) {
         case 'relationship-scan': return '⏳ 關係確認中'
+        case 'data-filling': return '📝 資料填充中'
         case 'in-game': return '🎮 遊戲進行中'
+        case 'verification': return '✅ 資料驗證中'
         case 'finished': return '🎉 遊戲結束'
         default: return '等待中'
     }
@@ -190,25 +192,39 @@ watch(
     }
 )
 
-// ── 監聽 MVFT 節點變化，高亮新節點 ───────────
+// ── MVFT 版本號（用於強制 VueFlow 重新渲染）───────────
+const mvftVersion = computed(() => {
+    const mvft = props.data.mvft
+    if (!mvft) return 0
+    // 用節點數 + 邊數 + 所有標籤的雜湊來產生唯一版本
+    return mvft.nodes.map(n => `${n.id}:${n.label}:${n.gender}`).join(',') + '|' + mvft.edges.length
+})
+
+// ── 監聽 MVFT 節點變化，高亮新節點或更新的節點 ───────────
 const prevNodeIds = ref<Set<string>>(new Set())
+const prevNodeLabels = ref<Map<string, string>>(new Map())
 watch(
-    () => props.data.mvft?.nodes.map(n => n.id).join(','),
+    () => props.data.mvft?.nodes.map(n => `${n.id}:${n.label}`).join(','),
     (cur, prev) => {
         if (!props.data.mvft) return
         const curIds = new Set(props.data.mvft.nodes.map(n => n.id))
-        curIds.forEach(id => {
-            if (!prevNodeIds.value.has(id)) {
-                highlightedNodeIds.value.add(id)
-                setTimeout(() => highlightedNodeIds.value.delete(id), 2000)
+        // 高亮新增或標籤有變的節點
+        for (const n of props.data.mvft.nodes) {
+            const isNew = !prevNodeIds.value.has(n.id)
+            const labelChanged = prevNodeLabels.value.get(n.id) !== n.label
+            if (isNew || labelChanged) {
+                highlightedNodeIds.value.add(n.id)
+                setTimeout(() => highlightedNodeIds.value.delete(n.id), 2000)
             }
-        })
+        }
         prevNodeIds.value = curIds
+        prevNodeLabels.value = new Map(props.data.mvft.nodes.map(n => [n.id, n.label]))
     }
 )
 
 // ── 族譜完整度 ─────────────────────────────────
-const confirmedNodeCount = computed(() => props.data.mvft?.nodes.filter(n => !n.isVirtual).length ?? 0)
+// 已確認節點 = 有名字的節點（玩家節點 + 已命名的虛擬節點）
+const confirmedNodeCount = computed(() => props.data.mvft?.nodes.filter(n => n.isPlayer || (n.label && n.label !== '' && !n.label.includes('的'))).length ?? 0)
 const playerNodeCount = computed(() => props.data.mvft?.nodes.filter(n => n.isPlayer).length ?? 0)
 const virtualNodeCount = computed(() => props.data.mvft?.nodes.filter(n => n.isVirtual).length ?? 0)
 const completenessPercent = computed(() => {
@@ -284,8 +300,10 @@ const flowNodes = computed(() => {
             avatar: genderEmoji(n),
             isVirtual: n.isVirtual,
             isPlayer: n.isPlayer,
+            isConfirmed: n.isConfirmed ?? n.isPlayer,
             gender: n.gender,
             isHighlighted: highlightedNodeIds.value.has(n.id),
+            birthday: n.birthday,
         },
     }))
 })
