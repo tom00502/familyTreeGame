@@ -174,7 +174,7 @@
                     <!-- 無已知子女模式：直接選數量或沒有 -->
                     <template v-if="(currentTask as any).knownChildrenCount === 0">
                         <div class="space-y-2">
-                            <button @click="answerInput = 'no'"
+                            <button @click="answerInput = 'no'; childrenCountInput = null"
                                 class="w-full py-3 px-4 rounded-lg border-2 transition-all font-medium text-left"
                                 :class="answerInput === 'no'
                                     ? 'bg-[#8B2635] text-white border-[#D4AF37]'
@@ -182,11 +182,20 @@
                                 ">
                                 🚫 沒有小孩
                             </button>
-                            <div class="flex items-center gap-3">
+                            <div class="flex items-center justify-center gap-4 py-2"
+                                @click="if (!childrenCountInput) { childrenCountInput = 1; answerInput = 'has_children' }">
                                 <span class="text-sm text-[#5C2E2E] whitespace-nowrap">👶 有</span>
-                                <input v-model.number="childrenCountInput" type="number" min="1" max="20"
-                                    placeholder="幾" @input="answerInput = 'has_children'"
-                                    class="w-20 px-3 py-2 rounded-lg border-2 border-[#8B8278]/20 focus:border-[#8B2635] focus:outline-none text-[#5C2E2E] text-center" />
+                                <button @click.stop="decrementChildren('has_children')"
+                                    :disabled="!childrenCountInput || childrenCountInput <= 1"
+                                    class="w-10 h-10 rounded-full border-2 border-[#8B8278]/20 flex items-center justify-center text-lg font-bold text-[#5C2E2E] hover:bg-[#F5F1E8] disabled:opacity-30 transition-all">
+                                    −
+                                </button>
+                                <span class="text-3xl font-bold min-w-[2.5rem] text-center"
+                                    :class="childrenCountInput ? 'text-[#8B2635]' : 'text-[#8B8278]/40'">{{ childrenCountInput || 0 }}</span>
+                                <button @click.stop="incrementChildren('has_children')"
+                                    class="w-10 h-10 rounded-full border-2 border-[#8B8278]/20 flex items-center justify-center text-lg font-bold text-[#5C2E2E] hover:bg-[#F5F1E8] transition-all">
+                                    +
+                                </button>
                                 <span class="text-sm text-[#5C2E2E]">個小孩</span>
                             </div>
                         </div>
@@ -194,7 +203,7 @@
                     <!-- 已知有子女模式：問還有沒有其他 -->
                     <template v-else>
                         <div class="space-y-2">
-                            <button @click="answerInput = 'no_more'"
+                            <button @click="answerInput = 'no_more'; childrenCountInput = null"
                                 class="w-full py-3 px-4 rounded-lg border-2 transition-all font-medium text-left"
                                 :class="answerInput === 'no_more'
                                     ? 'bg-[#8B2635] text-white border-[#D4AF37]'
@@ -202,11 +211,20 @@
                                 ">
                                 ✅ 沒有其他子女了
                             </button>
-                            <div class="flex items-center gap-3">
+                            <div class="flex items-center justify-center gap-4 py-2"
+                                @click="if (!childrenCountInput) { childrenCountInput = 1; answerInput = 'has_more' }">
                                 <span class="text-sm text-[#5C2E2E] whitespace-nowrap">👶 還有</span>
-                                <input v-model.number="childrenCountInput" type="number" min="1" max="20"
-                                    placeholder="幾" @input="answerInput = 'has_more'"
-                                    class="w-20 px-3 py-2 rounded-lg border-2 border-[#8B8278]/20 focus:border-[#8B2635] focus:outline-none text-[#5C2E2E] text-center" />
+                                <button @click.stop="decrementChildren('has_more')"
+                                    :disabled="!childrenCountInput || childrenCountInput <= 1"
+                                    class="w-10 h-10 rounded-full border-2 border-[#8B8278]/20 flex items-center justify-center text-lg font-bold text-[#5C2E2E] hover:bg-[#F5F1E8] disabled:opacity-30 transition-all">
+                                    −
+                                </button>
+                                <span class="text-3xl font-bold min-w-[2.5rem] text-center"
+                                    :class="childrenCountInput ? 'text-[#8B2635]' : 'text-[#8B8278]/40'">{{ childrenCountInput || 0 }}</span>
+                                <button @click.stop="incrementChildren('has_more')"
+                                    class="w-10 h-10 rounded-full border-2 border-[#8B8278]/20 flex items-center justify-center text-lg font-bold text-[#5C2E2E] hover:bg-[#F5F1E8] transition-all">
+                                    +
+                                </button>
                                 <span class="text-sm text-[#5C2E2E]">位</span>
                             </div>
                         </div>
@@ -275,6 +293,23 @@ const progressPercentage = computed(() => {
 const answerInput = ref('')
 const childrenCountInput = ref<number | null>(null)
 const isLoading = ref(false)
+
+// 加減按鈕 helpers
+function incrementChildren(mode: 'has_children' | 'has_more') {
+    if (!childrenCountInput.value) {
+        childrenCountInput.value = 1
+    } else {
+        childrenCountInput.value = Math.min(20, childrenCountInput.value + 1)
+    }
+    answerInput.value = mode
+}
+
+function decrementChildren(mode: 'has_children' | 'has_more') {
+    if (childrenCountInput.value && childrenCountInput.value > 1) {
+        childrenCountInput.value--
+        answerInput.value = mode
+    }
+}
 
 const canConfirm = computed(() => {
     if (!props.currentTask || isLoading.value) return false

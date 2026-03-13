@@ -45,11 +45,21 @@
     </div>
   </div>
 
-  <!-- 第一階段完成：骨架族譜預覽（MVFT 驗證模式） -->
-  <MvftPreview v-else-if="gamePhase === 'verification' && mvftData" :mvft="mvftData" />
+  <!-- 第三階段：資料驗證（Phase 3） -->
+  <VerificationQuestion
+    v-else-if="gamePhase === 'verification'"
+    :question="verificationQuestion"
+    :result="verificationResult"
+    :waiting="verificationWaiting"
+    @answer="handleVerificationAnswer"
+    @skip="handleVerificationSkip"
+  />
 
-  <!-- verification 或 in-game 尚未收到 MVFT 時的等待狀態 -->
-  <div v-else-if="(gamePhase === 'verification' || gamePhase === 'in-game') && !mvftData"
+  <!-- 第四階段：結果揭曉 — 骨架族譜顯示 (Phase 4) -->
+  <MvftPreview v-else-if="gamePhase === 'finished' && mvftData" :mvft="mvftData" />
+
+  <!-- finished 階段尚未收到 MVFT 時的等待狀態 -->
+  <div v-else-if="gamePhase === 'finished' && !mvftData"
     class="min-h-screen bg-[#FAF8F3] flex items-center justify-center p-6">
     <div class="text-center space-y-4">
       <div
@@ -87,6 +97,7 @@ import GameLobby from '~/components/GameLobby.vue'
 import RelationshipQuestion from '~/components/RelationshipQuestion.vue'
 import DataFillingQuestion from '~/components/DataFillingQuestion.vue'
 import MvftPreview from '~/components/MvftPreview.vue'
+import VerificationQuestion from '~/components/VerificationQuestion.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -116,6 +127,12 @@ const {
   currentTask,
   answerTask,
   skipTask,
+  // Phase 3
+  verificationQuestion,
+  verificationResult,
+  verificationWaiting,
+  answerVerification,
+  skipVerification,
 } = useGameWebSocket()
 
 console.log('[Room] useGameWebSocket 已初始化')
@@ -331,6 +348,22 @@ const handleGameTimeout = () => {
   if (currentTask.value) {
     handleTaskSkipped()
   }
+}
+
+// ────────────────────────────────────────────
+// Phase 3：驗證事件處理
+// ────────────────────────────────────────────
+
+// 處理驗證答題
+const handleVerificationAnswer = (questionId: string, answer: any) => {
+  console.log('[Phase 3] 提交驗證答案:', questionId, answer)
+  answerVerification(questionId, answer)
+}
+
+// 處理驗證跳過
+const handleVerificationSkip = (questionId: string) => {
+  console.log('[Phase 3] 跳過驗證:', questionId)
+  skipVerification(questionId)
 }
 
 // 監聽 WebSocket 錯誤

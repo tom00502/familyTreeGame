@@ -1,6 +1,6 @@
 import type { Peer } from "crossws";
 import { gameState } from "../utils/gameState";
-import type { Room, Player, FamilyNode, RelationshipRecord, Spectator, AnswerRecord, Phase2Task, TaskPriority } from "../utils/gameState";
+import type { Room, Player, FamilyNode, RelationshipRecord, Spectator, AnswerRecord, Phase2Task, TaskPriority, VerificationQuestion, VerificationResult, VerificationOutcome } from "../utils/gameState";
 import {
   handleOwnerDisconnection,
   validatePlayerInfo,
@@ -9,6 +9,7 @@ import {
 import { titleToPath, buildSkeletonMvft } from "../utils/mvftBuilder";
 import { instantiateVirtualNodes, generatePhase2Tasks, initializeEFUTrackers, selectNextTaskToDispatch, selectNextTaskForPlayer, updateTaskLabelsAfterNaming, isTaskStillNeeded, createDynamicSpouseNode, createDynamicChildrenNodes, detectSameNameNodes, mergeVirtualNodes } from "../utils/phase2TaskGenerator";
 import { checkEFUCompletion } from "../utils/phase2EFUChecker";
+import { initializePhase3State, selectNextVerificationQuestion, createForwardQuestion, compareAnswers } from "../utils/phase3VerificationGenerator";
 
 interface GamePeer extends Peer {
   playerId?: string;
@@ -717,12 +718,16 @@ async function handleMessage(peer: any, message: any) {
           console.log(`[Phase 2] 所有關鍵節點 EFU 已完成且無待處理任務，進入驗證階段`);
           room.status = "verification";
           
-          // 顯示完整 MVFT
+          // ★ Phase 3：初始化驗證系統（不發送 MVFT 給玩家）
+          room.phase3State = initializePhase3State(room);
+          console.log(`[Phase 3] 初始化完成：問題池 ${room.phase3State.questionPool.length} 題`);
+          
+          // 通知玩家進入 Phase 3（無縫銜接，不附帶 MVFT）
           broadcastToRoom(room.roomId, "", {
             type: "stage_completed",
             stage: "data-filling",
             nextStage: "verification",
-            mvft: room.mvft,  // 現在才展示 MVFT
+            // ★ 不傳 mvft — 延遲到 Phase 3 結束
           });
           
           broadcastToSpectators(roomId, {
@@ -739,6 +744,26 @@ async function handleMessage(peer: any, message: any) {
               efu_complete: true,
               nextTask: null,
             }));
+          }
+          
+          // ★ 派發第一批驗證題給所有玩家
+          const activePlayers = Array.from(room.players.values()).filter(p => !p.isOffline && !p.isObserver);
+          for (const p of activePlayers) {
+            const vq = selectNextVerificationQuestion(room.phase3State, p.playerId);
+            if (vq) {
+              room.phase3State.stats.totalQuestionsAsked++;
+              broadcastToPlayer(room.roomId, p.socketId, {
+                type: "verification:question",
+                question: {
+                  questionId: vq.questionId,
+                  questionText: vq.questionText,
+                  answerFormat: vq.answerFormat,
+                  options: vq.options,
+                  category: vq.category,
+                },
+              });
+              console.log(`[Phase 3] 派發驗證題給 ${p.name}: ${vq.questionText}`);
+            }
           }
         } else {
           // 6. 派發下一個任務給完成任務的玩家
@@ -846,6 +871,196 @@ async function handleMessage(peer: any, message: any) {
         room.answerHistory.unshift(skipRecord);
         if (room.answerHistory.length > 50) room.answerHistory.pop();
         broadcastToSpectators(roomId, { type: "spectator:answer_submitted", ...skipRecord });
+      }
+
+      // ──────────────────────────────────────────────
+      // Phase 3: 驗證答題事件處理
+      // ──────────────────────────────────────────────
+
+      if (data.type === "verification:answer") {
+        const { questionId, answer } = data;
+        const { roomId, playerId } = gamePeer;
+        
+        if (!roomId || !playerId) return;
+        
+        const room = gameState.rooms.get(roomId);
+        if (!room || room.status !== "verification" || !room.phase3State) return;
+        
+        const p3 = room.phase3State;
+        const question = p3.dispatchedQuestions.get(questionId);
+        if (!question || question.assignedPlayerId !== playerId) {
+          console.error(`[Phase 3] 問題 ID 或所有者不匹配: ${questionId}`);
+          return;
+        }
+        
+        const player = room.players.get(playerId);
+        if (!player) return;
+        
+        console.log(`[Phase 3] 玩家 ${player.name} 回答驗證題: ${question.questionText} → ${answer}`);
+        
+        // 從已派發移除
+        p3.dispatchedQuestions.delete(questionId);
+        
+        const answeredAt = Date.now();
+        const answerTime = question.dispatchedAt ? (answeredAt - question.dispatchedAt) / 1000 : 999;
+        
+        // 速度獎勵
+        let speedBonus = 0;
+        if (answerTime <= 5) speedBonus = 0.3;
+        else if (answerTime <= 10) speedBonus = 0.1;
+        
+        const isMatch = compareAnswers(answer, question.treeValue, question.answerFormat);
+        
+        if (question.isForwarded) {
+          // ★ 這是轉發的問題（第二位驗證者）
+          handleForwardedAnswer(room, question, answer, playerId, answeredAt, speedBonus);
+        } else if (isMatch) {
+          // ★ 情況 A：答案 = 族譜（驗證通過）
+          const score = 1 + speedBonus;
+          const result: VerificationResult = {
+            questionId,
+            outcome: "verified",
+            playerAnswers: [{ playerId, answer, answeredAt }],
+            treeValue: question.treeValue,
+            scoreChanges: [{ playerId, delta: score, reason: "驗證通過" }],
+          };
+          p3.completedResults.push(result);
+          p3.stats.verifiedCorrect++;
+          
+          // 更新得分
+          const currentScore = p3.playerVerificationScores.get(playerId) || 0;
+          p3.playerVerificationScores.set(playerId, currentScore + score);
+          
+          // 標記為已驗證
+          p3.verifiedAttributes.add(`${question.targetNodeId}:${question.template}`);
+          
+          // 回饋給玩家
+          broadcastToPlayer(room.roomId, player.socketId, {
+            type: "verification:result",
+            questionId,
+            outcome: "verified",
+            scoreDelta: score,
+            message: "✅ 驗證通過！",
+          });
+          
+          console.log(`[Phase 3] 驗證通過，${player.name} +${score} 分`);
+        } else {
+          // ★ 情況 B：答案 ≠ 族譜（轉發給第二位玩家）
+          const forwardQ = createForwardQuestion(question, answer, playerId, room);
+          
+          if (forwardQ && forwardQ.assignedPlayerId) {
+            p3.pendingForwards.set(forwardQ.questionId, forwardQ);
+            
+            // 先告知第一位玩家等待第二方驗證
+            broadcastToPlayer(room.roomId, player.socketId, {
+              type: "verification:result",
+              questionId,
+              outcome: "pending_forward",
+              scoreDelta: 0,
+              message: "⏳ 已轉給另一位家人驗證...",
+            });
+            
+            // 直接派發轉發題給第二位玩家
+            const targetPlayer = room.players.get(forwardQ.assignedPlayerId);
+            if (targetPlayer) {
+              p3.pendingForwards.delete(forwardQ.questionId);
+              p3.dispatchedQuestions.set(forwardQ.questionId, forwardQ);
+              p3.stats.totalQuestionsAsked++;
+              
+              broadcastToPlayer(room.roomId, targetPlayer.socketId, {
+                type: "verification:question",
+                question: {
+                  questionId: forwardQ.questionId,
+                  questionText: forwardQ.questionText,
+                  answerFormat: forwardQ.answerFormat,
+                  options: forwardQ.options,
+                  category: forwardQ.category,
+                  isForwarded: true,
+                },
+              });
+              console.log(`[Phase 3] 轉發驗證題給 ${targetPlayer.name}: ${forwardQ.questionText}`);
+            }
+          } else {
+            // 找不到可轉發的玩家 → 標記為未驗證
+            const result: VerificationResult = {
+              questionId,
+              outcome: "timeout",
+              playerAnswers: [{ playerId, answer, answeredAt }],
+              treeValue: question.treeValue,
+              scoreChanges: [],
+            };
+            p3.completedResults.push(result);
+            
+            broadcastToPlayer(room.roomId, player.socketId, {
+              type: "verification:result",
+              questionId,
+              outcome: "timeout",
+              scoreDelta: 0,
+              message: "⚠️ 無法轉發驗證，維持原值",
+            });
+          }
+        }
+        
+        // 記錄答題歷史（旁觀者）
+        const verifyRecord: AnswerRecord = {
+          timestamp: Date.now(),
+          playerName: player.name,
+          playerId,
+          summary: `驗證：${question.questionText}`,
+          status: "confirmed",
+        };
+        room.answerHistory.unshift(verifyRecord);
+        if (room.answerHistory.length > 50) room.answerHistory.pop();
+        broadcastToSpectators(roomId, { type: "spectator:answer_submitted", ...verifyRecord });
+        
+        // 派發下一題
+        dispatchNextVerificationToPlayer(room, playerId);
+      }
+
+      // Phase 3: 跳過驗證題
+      if (data.type === "verification:skip") {
+        const { questionId } = data;
+        const { roomId, playerId } = gamePeer;
+        
+        if (!roomId || !playerId) return;
+        
+        const room = gameState.rooms.get(roomId);
+        if (!room || room.status !== "verification" || !room.phase3State) return;
+        
+        const p3 = room.phase3State;
+        const question = p3.dispatchedQuestions.get(questionId);
+        if (!question || question.assignedPlayerId !== playerId) return;
+        
+        const player = room.players.get(playerId);
+        if (!player) return;
+        
+        console.log(`[Phase 3] 玩家 ${player.name} 跳過驗證題: ${question.questionText}`);
+        
+        // 移除並記錄
+        p3.dispatchedQuestions.delete(questionId);
+        const result: VerificationResult = {
+          questionId,
+          outcome: "skipped",
+          playerAnswers: [],
+          treeValue: question.treeValue,
+          scoreChanges: [],
+        };
+        p3.completedResults.push(result);
+        
+        // 跳過紀錄（旁觀者）
+        const skipRecord: AnswerRecord = {
+          timestamp: Date.now(),
+          playerName: player.name,
+          playerId,
+          summary: `跳過驗證：${question.questionText}`,
+          status: "skipped",
+        };
+        room.answerHistory.unshift(skipRecord);
+        if (room.answerHistory.length > 50) room.answerHistory.pop();
+        broadcastToSpectators(roomId, { type: "spectator:answer_submitted", ...skipRecord });
+        
+        // 派發下一題
+        dispatchNextVerificationToPlayer(room, playerId);
       }
 
       // 重連請求
@@ -1282,4 +1497,260 @@ async function checkAllQuestionsCompleted(room: Room) {
       });
     }
   }
+}
+
+// ════════════════════════════════════════════════════════════════
+// Phase 3 輔助函式
+// ════════════════════════════════════════════════════════════════
+
+/** 處理轉發驗證的答案（第二位玩家） */
+function handleForwardedAnswer(
+  room: Room,
+  question: VerificationQuestion,
+  answer: any,
+  playerId: string,
+  answeredAt: number,
+  speedBonus: number
+) {
+  const p3 = room.phase3State!;
+  const player = room.players.get(playerId);
+  if (!player) return;
+
+  const originalPlayerId = question.originalAnswerPlayerId!;
+  const originalAnswer = question.originalAnswer;
+  const treeValue = question.treeValue;
+
+  const matchOriginal = compareAnswers(answer, originalAnswer, question.answerFormat);
+  const matchTree = compareAnswers(answer, treeValue, question.answerFormat);
+
+  let outcome: VerificationOutcome;
+  const scoreChanges: Array<{ playerId: string; delta: number; reason: string }> = [];
+
+  if (matchOriginal) {
+    // 情況 B-1：第二位 = 第一位 → 族譜有誤，更新族譜
+    outcome = "tree_corrected";
+    scoreChanges.push({ playerId: originalPlayerId, delta: 1.5 + speedBonus, reason: "發現並修正族譜錯誤" });
+    scoreChanges.push({ playerId, delta: 1 + speedBonus, reason: "確認修正答案" });
+    p3.stats.treeCorrections++;
+
+    // 即時更新族譜
+    updateTreeFromVerification(room, question, answer);
+
+    console.log(`[Phase 3] 族譜修正：${question.questionText} → ${answer}（兩人一致）`);
+  } else if (matchTree) {
+    // 情況 B-2：第二位 = 族譜 → 第一人答錯
+    outcome = "player_wrong";
+    scoreChanges.push({ playerId: originalPlayerId, delta: 0, reason: "答案錯誤" });
+    scoreChanges.push({ playerId, delta: 1 + speedBonus, reason: "維護族譜正確性" });
+    p3.stats.verifiedCorrect++;
+
+    console.log(`[Phase 3] 第一人答錯，族譜正確：${question.questionText}`);
+  } else {
+    // 情況 B-3：三方各異
+    outcome = "three_way_conflict";
+    p3.stats.unresolvedConflicts++;
+    p3.conflictRecords.push({
+      conflictId: crypto.randomUUID(),
+      nodeId: question.targetNodeId,
+      attribute: question.template,
+      treeValue,
+      playerAnswers: [
+        { playerId: originalPlayerId, answer: originalAnswer },
+        { playerId, answer },
+      ],
+      createdAt: Date.now(),
+    });
+
+    console.log(`[Phase 3] 三方衝突：${question.questionText} (族譜=${treeValue}, A=${originalAnswer}, B=${answer})`);
+  }
+
+  // 更新得分
+  for (const sc of scoreChanges) {
+    const current = p3.playerVerificationScores.get(sc.playerId) || 0;
+    p3.playerVerificationScores.set(sc.playerId, current + sc.delta);
+  }
+
+  // 記錄結果
+  const result: VerificationResult = {
+    questionId: question.questionId,
+    outcome,
+    playerAnswers: [
+      { playerId: originalPlayerId, answer: originalAnswer, answeredAt: question.createdAt },
+      { playerId, answer, answeredAt },
+    ],
+    treeValue,
+    newTreeValue: outcome === "tree_corrected" ? answer : undefined,
+    scoreChanges,
+  };
+  p3.completedResults.push(result);
+
+  // 標記已驗證
+  p3.verifiedAttributes.add(`${question.targetNodeId}:${question.template}`);
+
+  // 通知第二位玩家結果
+  const outcomeMessage = outcome === "tree_corrected"
+    ? "🎉 發現族譜錯誤，已修正！"
+    : outcome === "player_wrong"
+      ? "✅ 你的答案正確，族譜已確認"
+      : "⚠️ 三方答案各異，已標記為衝突";
+
+  broadcastToPlayer(room.roomId, player.socketId, {
+    type: "verification:result",
+    questionId: question.questionId,
+    outcome,
+    scoreDelta: scoreChanges.find(s => s.playerId === playerId)?.delta || 0,
+    message: outcomeMessage,
+  });
+
+  // 通知第一位玩家（如果在線）
+  const originalPlayer = room.players.get(originalPlayerId);
+  if (originalPlayer && !originalPlayer.isOffline) {
+    const oMessage = outcome === "tree_corrected"
+      ? "🎉 你發現了族譜錯誤，已修正！"
+      : outcome === "player_wrong"
+        ? "❌ 你的答案有誤，族譜原值正確"
+        : "⚠️ 三方答案各異，已標記為衝突";
+    broadcastToPlayer(room.roomId, originalPlayer.socketId, {
+      type: "verification:forward_result",
+      questionId: question.questionId,
+      outcome,
+      scoreDelta: scoreChanges.find(s => s.playerId === originalPlayerId)?.delta || 0,
+      message: oMessage,
+    });
+  }
+
+  // 通知旁觀者族譜更新（如有）
+  if (outcome === "tree_corrected" && room.mvft) {
+    broadcastToSpectators(room.roomId, {
+      type: "spectator:tree_updated",
+      mvft: room.mvft,
+      updatedNodeId: question.targetNodeId,
+      updateType: "verification_correction",
+    });
+  }
+}
+
+/** 根據驗證結果更新族譜（即時更新） */
+function updateTreeFromVerification(room: Room, question: VerificationQuestion, newValue: any) {
+  const vnode = room.familyTree.virtualNodes?.get(question.targetNodeId);
+  if (!vnode) return;
+
+  // 根據題型更新不同屬性
+  switch (question.category) {
+    case "parent-confirm":
+      // 親子關係確認 — 若 answer = false 則需要斷開關係，但目前簡單處理
+      break;
+    case "spouse-confirm":
+      break;
+    case "children-count":
+      if (question.template === "3-1") {
+        // 子女人數 — 記錄但不直接修改節點結構
+      }
+      break;
+    case "attribute-verify":
+      if (question.template === "5-1" && (newValue === "male" || newValue === "female")) {
+        vnode.gender = newValue;
+      }
+      break;
+    default:
+      break;
+  }
+
+  vnode.updatedAt = Date.now();
+
+  // 重建 MVFT 顯示資料
+  try {
+    const playerInfoList = Array.from(room.players.values())
+      .filter(p => !p.isObserver)
+      .map(p => ({ playerId: p.playerId, nodeId: p.nodeId, name: p.name, gender: p.gender, birthday: p.birthday }));
+    const updatedMvft = buildSkeletonMvft(room.relationships, playerInfoList, room.familyTree.virtualNodes);
+    room.mvft = updatedMvft;
+  } catch (err) {
+    console.error(`[Phase 3] 重建 MVFT 失敗:`, err);
+  }
+}
+
+/** 派發下一道驗證題給玩家 */
+function dispatchNextVerificationToPlayer(room: Room, playerId: string) {
+  const p3 = room.phase3State;
+  if (!p3) return;
+
+  const player = room.players.get(playerId);
+  if (!player || player.isOffline || player.isObserver) return;
+
+  const nextQ = selectNextVerificationQuestion(p3, playerId);
+  if (nextQ) {
+    p3.stats.totalQuestionsAsked++;
+    broadcastToPlayer(room.roomId, player.socketId, {
+      type: "verification:question",
+      question: {
+        questionId: nextQ.questionId,
+        questionText: nextQ.questionText,
+        answerFormat: nextQ.answerFormat,
+        options: nextQ.options,
+        category: nextQ.category,
+        isForwarded: nextQ.isForwarded,
+      },
+    });
+    console.log(`[Phase 3] 派發驗證題給 ${player.name}: ${nextQ.questionText}`);
+  } else {
+    // 沒有更多驗證題 — 檢查是否所有人都沒有題目了
+    const hasAnyDispatched = p3.dispatchedQuestions.size > 0;
+    const hasAnyPending = p3.pendingForwards.size > 0;
+    const hasPool = p3.questionPool.length > 0;
+
+    if (!hasAnyDispatched && !hasAnyPending && !hasPool) {
+      // 所有驗證完成 → 結束 Phase 3，進入 Phase 4
+      endPhase3(room);
+    } else {
+      // 通知玩家等待
+      broadcastToPlayer(room.roomId, player.socketId, {
+        type: "verification:waiting",
+        message: "等待其他家人驗證...",
+      });
+    }
+  }
+}
+
+/** 結束 Phase 3，進入結果揭曉（Phase 4） */
+function endPhase3(room: Room) {
+  console.log(`[Phase 3] 驗證階段結束`);
+  room.status = "finished";
+
+  const p3 = room.phase3State;
+  const verificationStats = p3 ? {
+    totalQuestionsAsked: p3.stats.totalQuestionsAsked,
+    verifiedCorrect: p3.stats.verifiedCorrect,
+    treeCorrections: p3.stats.treeCorrections,
+    unresolvedConflicts: p3.stats.unresolvedConflicts,
+    coverageRate: p3.verifiedAttributes.size / Math.max(1, p3.completedResults.length + p3.questionPool.length),
+  } : null;
+
+  // 彙總玩家 Phase 3 得分到總分
+  if (p3) {
+    for (const [playerId, score] of p3.playerVerificationScores) {
+      const player = room.players.get(playerId);
+      if (player) {
+        player.score += score;
+      }
+    }
+  }
+
+  console.log(`[Phase 3] 統計:`, verificationStats);
+
+  // ★ 現在才將 MVFT 發送給玩家（Phase 3 結束 = 大揭曉）
+  broadcastToRoom(room.roomId, "", {
+    type: "stage_completed",
+    stage: "verification",
+    nextStage: "finished",
+    mvft: room.mvft,
+    verificationStats,
+  });
+
+  broadcastToSpectators(room.roomId, {
+    type: "spectator:phase_changed",
+    phase: "finished",
+    mvft: room.mvft,
+    verificationStats,
+  });
 }

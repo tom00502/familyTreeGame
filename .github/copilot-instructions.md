@@ -36,7 +36,8 @@ docs/ (規格文件根目錄)
 ├── features/ (業務策略層)
 │   ├─ qa_phase1_relationship_check.md (關係確認出題邏輯)
 │   ├─ qa_phase2_data_filling.md (資料填充策略)
-│   ├─ qa_phase3_data_check.md (計分與結果呈現)
+│   ├─ qa_phase3_data_check.md (資料驗證、多人交叉驗證、族譜修正)
+│   ├─ reveal.md (結果揭曉、動畫序列、排名呈現)
 │   ├─ relationship_path_resolution.md (關係路徑解析、稱謂映射、BFS 遍歷)
 │   ├─ scoring_system.md (計分系統、任務基礎分、獎勵與扣分機制)
 │   └─ spectator_mode.md (旁觀者看板、答題監測、即時族譜)
@@ -103,7 +104,8 @@ docs/ (規格文件根目錄)
 
 - [qa_phase1_relationship_check.md](../docs/features/qa_phase1_relationship_check.md) - 關係確認階段的出題邏輯、二階段追問、虛擬節點生成
 - [qa_phase2_data_filling.md](../docs/features/qa_phase2_data_filling.md) - 資料填充階段的任務派發策略、MVFT 概念、獨佔提問規則
-- [qa_phase3_data_check.md](../docs/features/qa_phase3_data_check.md) - 結算階段的資料驗證、衝突解決、計分系統、排名機制
+- [qa_phase3_data_check.md](../docs/features/qa_phase3_data_check.md) - 資料驗證階段、多人交叉驗證、驗證題庫、族譜即時修正
+- [reveal.md](../docs/features/reveal.md) - 結果揭曉階段、揭曉動畫序列、排名呈現、分享與數據保存
 - [relationship_path_resolution.md](../docs/features/relationship_path_resolution.md) - 關係路徑解析、稱謂映射標準化、BFS 圖形遍歷、骨架族譜生成
 - [scoring_system.md](../docs/features/scoring_system.md) - 計分系統獨立規格、任務基礎分、獎勵加分與扣分機制
 - [spectator_mode.md](../docs/features/spectator_mode.md) - 旁觀者看板、答題監測、即時族譜、權限限制
@@ -176,7 +178,7 @@ docs/ (規格文件根目錄)
 
 ### 📝 提問與結果發表過程
 
-玩家在遊戲進行中不會看到階段轉變提示，系統根據**出題邏輯**自動推進三個連續的提問階段，最終在時間結束時進行**大揭曉**。
+玩家在遊戲進行中不會看到階段轉變提示，系統根據**出題邏輯**自動推進三個連續的提問階段，最終在時間結束時進行**大揭曉**（Phase 4）。
 
 #### 階段 1：關係確認 (Relationship Check)
 
@@ -211,20 +213,36 @@ docs/ (規格文件根目錄)
 - 獨佔提問規則與鎖定機制
 - 邊界情況處理（多重婚姻、同名誤判、衝突標記）
 
-#### 階段 3：資料確認與大揭曉 (Data Verification & Big Reveal)
+#### 階段 3：資料驗證 (Data Verification)
 
-**玩家體驗**：遊戲時間結束，系統驗證資料、解決衝突，展示完整族譜及排名
+**玩家體驗**：無縫銜接 Phase 2，持續收到驗證性問題（「XXX 是 YYY 的父親嗎？」等）
 
-**系統目標**：驗證、確認和展示最終的族譜結果
+**系統目標**：透過主動出題驗證先前填寫的資料，發現並修正族譜錯誤
 
 📄 **詳細規格** → [qa_phase3_data_check.md](../docs/features/qa_phase3_data_check.md)
 
 此階段涵蓋：
 
-- 資料核查流程（衝突檢測、完整性驗證、關係一致性檢查）
-- 揭曉動畫與視覺化呈現
-- 計分系統詳解（計分項目、權重、排名機制）
-- 結果呈現（族譜完整度、個人貢獻、MVP 決定）
+- 驗證出題系統（7 大題型、30+ 問題模板）
+- 多人交叉驗證機制（三方比對：族譜、玩家 A、玩家 B）
+- 驗證計分機制（正確得分、發現錯誤獎勵、一致性懲罰）
+- 族譜即時更新（驗證確認後直接修正族譜）
+- 衝突記錄與標記
+
+#### 階段 4：結果揭曉 (Big Reveal)
+
+**玩家體驗**：遊戲時間結束，以動畫揭曉完整族譜，展示排名與個人貢獻
+
+**系統目標**：視覺化呈現最終族譜，彙總計分與排名
+
+📄 **詳細規格** → [reveal.md](../docs/features/reveal.md)
+
+此階段涵蓋：
+
+- 揭曉動畫序列（畫面轉換、登場動畫、完整族譜展示）
+- 計分彙總（Phase 1-3 所有得分）
+- 結果呈現（族譜完整度、個人貢獻、排行榜、MVP 決定）
+- 分享與數據保存
 - 特殊情況與異常處理
 
 ---
@@ -264,7 +282,8 @@ docs/ (規格文件根目錄)
 
 **第一階段（關係確認）** → [qa_phase1_relationship_check.md](../docs/features/qa_phase1_relationship_check.md#-出題派發規則)  
 **第二階段（資料填充）** → [qa_phase2_data_filling.md](../docs/features/qa_phase2_data_filling.md#-任務派發策略)  
-**第三階段（資料確認）** → [qa_phase3_data_check.md](../docs/features/qa_phase3_data_check.md)
+**第三階段（資料驗證）** → [qa_phase3_data_check.md](../docs/features/qa_phase3_data_check.md)  
+**第四階段（結果揭曉）** → [reveal.md](../docs/features/reveal.md)
 
 問題模板詳見各階段規格文件中的**提問問題模板表**部分。
 
@@ -281,7 +300,7 @@ docs/ (規格文件根目錄)
 
 ### 計分系統
 
-計分系統的完整說明（計分項目、權重、修飾符、排名機制、MVP 決定）詳見 [qa_phase3_data_check.md](../docs/features/qa_phase3_data_check.md#-計分系統詳解)
+計分系統的完整說明（計分項目、權重、修飾符、排名機制、MVP 決定）詳見 [scoring_system.md](../docs/features/scoring_system.md)，結算與排名呈現詳見 [reveal.md](../docs/features/reveal.md)
 
 ### 即時通訊
 

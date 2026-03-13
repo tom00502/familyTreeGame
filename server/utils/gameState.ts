@@ -285,6 +285,9 @@ export interface Room {
     taskDispatchIndex: number; // 任務派發指針
     lastDispatchTime: number;  // 最後派發時間（防止過度派發）
   };
+
+  // ========== Phase 3 驗證系統 ==========
+  phase3State?: Phase3State;
   
   controllerId: string;
   originalOwnerId?: string;
@@ -311,6 +314,98 @@ export interface AnswerRecord {
   playerId: string;
   summary: string;            // 例如「確認「王大華」是爸爸」
   status: 'confirmed' | 'skipped';
+}
+
+// ==================== Phase 3 驗證系統 ====================
+
+export type VerificationCategory =
+  | "parent-confirm"       // 親子關係確認 (類別1)
+  | "spouse-confirm"       // 配偶關係確認 (類別2)
+  | "children-count"       // 子女數量驗證 (類別3)
+  | "kinship-reverse"      // 稱謂反查 (類別4)
+  | "attribute-verify"     // 屬性驗證 (類別5)
+  | "sibling-verify"       // 兄弟姐妹驗證 (類別6)
+  | "path-relation";       // 路徑關係驗證 (類別7)
+
+export type VerificationAnswerFormat = "yes-no" | "number" | "multiple-choice" | "gender" | "text";
+
+export interface VerificationQuestion {
+  questionId: string;
+  category: VerificationCategory;
+  template: string;                    // 問題模板 ID (e.g. "1-1", "3-1")
+  questionText: string;                // 實際問題文字
+  answerFormat: VerificationAnswerFormat;
+  options?: string[];                  // 多選題的選項
+  // 族譜現有答案（用於三方比對）
+  treeValue: any;
+  // 關聯節點
+  targetNodeId: string;
+  targetNodeName: string;
+  relatedNodeId?: string;
+  relatedNodeName?: string;
+  // 優先級資訊
+  isKeyNode: boolean;
+  priority: number;                    // 數字越大越優先
+  // 派發資訊
+  assignedPlayerId?: string;
+  // 轉發資訊
+  isForwarded: boolean;
+  originalAnswerPlayerId?: string;     // 轉發時：第一位回答者 ID
+  originalAnswer?: any;                // 轉發時：第一位回答者的答案
+  // Phase 2 填寫者（避免自己驗證自己）
+  phase2FillerPlayerIds: string[];
+  // 時間戳
+  createdAt: number;
+  dispatchedAt?: number;
+}
+
+export type VerificationOutcome =
+  | "verified"                 // 答案 = 族譜（通過）
+  | "tree_corrected"           // 兩人一致，族譜有誤（已更新）
+  | "player_wrong"             // 第二人 = 族譜，第一人有誤
+  | "three_way_conflict"       // 三方各異
+  | "pending_forward"          // 等待轉發驗證
+  | "timeout"                  // 超時未回應
+  | "skipped";                 // 玩家跳過
+
+export interface VerificationResult {
+  questionId: string;
+  outcome: VerificationOutcome;
+  playerAnswers: Array<{
+    playerId: string;
+    answer: any;
+    answeredAt: number;
+  }>;
+  treeValue: any;
+  newTreeValue?: any;          // 若族譜被更新，記錄新值
+  scoreChanges: Array<{
+    playerId: string;
+    delta: number;
+    reason: string;
+  }>;
+}
+
+export interface Phase3State {
+  questionPool: VerificationQuestion[];         // 待派發問題池
+  dispatchedQuestions: Map<string, VerificationQuestion>; // 已派發問題
+  completedResults: VerificationResult[];       // 已完成驗證結果
+  pendingForwards: Map<string, VerificationQuestion>;    // 等待轉發的問題
+  verifiedAttributes: Set<string>;              // 已驗證的屬性 key (nodeId:attribute)
+  conflictRecords: Array<{
+    conflictId: string;
+    nodeId: string;
+    attribute: string;
+    treeValue: any;
+    playerAnswers: Array<{ playerId: string; answer: any }>;
+    createdAt: number;
+  }>;
+  playerVerificationScores: Map<string, number>; // 玩家 Phase3 得分
+  stats: {
+    totalQuestionsAsked: number;
+    verifiedCorrect: number;
+    treeCorrections: number;
+    unresolvedConflicts: number;
+  };
 }
 
 export interface GameState {

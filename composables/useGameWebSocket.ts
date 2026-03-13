@@ -98,6 +98,10 @@ export function useGameWebSocket() {
   // Phase 2 狀態
   const currentTask = ref<any>(null)
   const efuComplete = ref(false)
+  // Phase 3 狀態
+  const verificationQuestion = ref<any>(null)
+  const verificationResult = ref<any>(null)
+  const verificationWaiting = ref(false)
 
   // 連線到 WebSocket
   const connect = () => {
@@ -256,16 +260,26 @@ export function useGameWebSocket() {
           }
           console.log('[Phase 2] 進入資料填充階段')
         } else if (data.stage === 'data-filling') {
-          // 儲存完整 MVFT 後進入驗證或完成
+          // ★ Phase 2 完成 → 進入 Phase 3 驗證（不附帶 MVFT）
+          gamePhase.value = 'verification'
+          if (roomState.value) {
+            roomState.value.status = 'verification' as any
+          }
+          // 不儲存 mvft — Phase 3 結束時才會收到
+          console.log('[Phase 3] 進入驗證階段')
+        } else if (data.stage === 'verification') {
+          // ★ Phase 3 完成 → 進入 Phase 4 揭曉（現在收到 MVFT）
           if (data.mvft) {
             mvftData.value = data.mvft
             console.log('[MVFT] 收到完整族譜:', data.mvft.nodes.length, '節點,', data.mvft.edges.length, '邊')
           }
-          gamePhase.value = data.nextStage === 'verification' ? 'verification' : 'in-game'
+          gamePhase.value = 'finished'
           if (roomState.value) {
-            roomState.value.status = gamePhase.value
+            roomState.value.status = 'finished'
           }
-          console.log('[大揭曉] 完整族譜已產生')
+          verificationQuestion.value = null
+          verificationWaiting.value = false
+          console.log('[Phase 4] 進入揭曉階段')
         }
         break
 
@@ -434,6 +448,50 @@ export function useGameWebSocket() {
         }
         break
 
+      // ────────────────────────────────────────
+      // Phase 3: 驗證階段事件
+      // ────────────────────────────────────────
+
+      case 'verification:question':
+        // 收到驗證問題
+        console.log('[Phase 3] 收到驗證題:', data.question?.questionText)
+        verificationQuestion.value = data.question
+        verificationResult.value = null
+        verificationWaiting.value = false
+        break
+
+      case 'verification:result':
+        // 驗證結果回饋
+        console.log('[Phase 3] 驗證結果:', data.outcome, '得分:', data.scoreDelta)
+        verificationResult.value = {
+          questionId: data.questionId,
+          outcome: data.outcome,
+          scoreDelta: data.scoreDelta,
+          message: data.message,
+        }
+        // 短暫顯示結果後清除（等待下一題）
+        break
+
+      case 'verification:forward_result':
+        // 轉發驗證結果（先前自己回答的題目被第二人確認了）
+        console.log('[Phase 3] 收到轉發結果:', data.outcome)
+        // 顯示為 toast / 通知
+        verificationResult.value = {
+          questionId: data.questionId,
+          outcome: data.outcome,
+          scoreDelta: data.scoreDelta,
+          message: data.message,
+          isForwardResult: true,
+        }
+        break
+
+      case 'verification:waiting':
+        // 等待其他玩家
+        console.log('[Phase 3] 等待其他玩家驗證')
+        verificationQuestion.value = null
+        verificationWaiting.value = true
+        break
+
       case 'error':
         // 錯誤訊息
         error.value = data.message
@@ -507,6 +565,23 @@ export function useGameWebSocket() {
     send({
       type: 'data_filling:skip',
       taskId,
+    })
+  }
+
+  // Phase 3: 回答驗證問題
+  const answerVerification = (questionId: string, answer: any) => {
+    send({
+      type: 'verification:answer',
+      questionId,
+      answer,
+    })
+  }
+
+  // Phase 3: 跳過驗證問題
+  const skipVerification = (questionId: string) => {
+    send({
+      type: 'verification:skip',
+      questionId,
     })
   }
 
@@ -588,6 +663,10 @@ export function useGameWebSocket() {
     spectatorState,
     currentTask,
     efuComplete,
+    // Phase 3
+    verificationQuestion,
+    verificationResult,
+    verificationWaiting,
 
     // 方法
     connect,
@@ -601,6 +680,8 @@ export function useGameWebSocket() {
     skipQuestion,
     answerTask,
     skipTask,
+    answerVerification,
+    skipVerification,
     reconnect,
     clearError,
   }
