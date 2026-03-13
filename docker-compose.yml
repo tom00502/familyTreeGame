@@ -1,0 +1,48 @@
+version: "3.8"
+
+services:
+
+  traefik:
+    image: traefik:v3.0
+    container_name: traefik
+    restart: always
+
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --api.dashboard=true
+
+    ports:
+      - "8866:80"
+      - "8877:8080"
+
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - web
+
+  app:
+    build:
+      context: ./familyTreeGame
+      dockerfile: Dockerfile
+    image: family-tree-game:latest
+    container_name: family-tree-app
+    restart: unless-stopped
+    environment:
+      - HOST=0.0.0.0
+      - PORT=3000
+      - NODE_ENV=production
+    expose:
+      - "3000"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.familytree.rule=Host(`family-game.parsons125.in`)"
+      - "traefik.http.routers.familytree.entrypoints=web"
+      - "traefik.http.services.familytree.loadbalancer.server.port=3000"
+    networks:
+      - web
+
+networks:
+  web:
+    driver: bridge
